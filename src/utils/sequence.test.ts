@@ -33,22 +33,35 @@ describe('sequence analysis', () => {
     expect(findRestrictionSites(sequence).map((site) => site.enzyme)).toEqual(['EcoRI', 'BamHI']);
     expect(designPrimers(sequence, 8)).toHaveLength(2);
     expect(analyzeSequence(sequence).restrictionSites).toHaveLength(2);
+    expect(analyzeSequence(sequence, { length: 8, minGc: 0, maxGc: 100, minTm: 0, maxTm: 100 }).primers?.every((primer) => primer.warnings.length === 0)).toBe(true);
   });
 
   it('compares sequences and reports positional differences', () => {
     expect(compareSequences('ATGC', 'ATTC')).toMatchObject({ comparedLength: 4, identityPercentage: 75, differences: [{ position: 3, reference: 'G', query: 'T' }] });
   });
 
-  it('summarizes FASTA and VCF inputs with epidemiology estimates', () => {
+  it('summarizes FASTA without treating ambiguous bases as variants and reads VCF annotations', () => {
     const fastaSummary = summarizeSequenceFile('>BRCA1\nATGNNR\n');
     expect(fastaSummary.format).toBe('fasta');
-    expect(fastaSummary.variantCount).toBeGreaterThanOrEqual(1);
-    expect(fastaSummary.populationSummary).toMatch(/Fasta|not available|candidate/i);
+    expect(fastaSummary.variantCount).toBe(0);
+    expect(fastaSummary.variants).toHaveLength(0);
+    expect(fastaSummary.ambiguousCount).toBe(3);
+    expect(fastaSummary.populationSummary).toMatch(/not variant calls/i);
 
-    const vcfSummary = summarizeSequenceFile('##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n1\t100\t.\tA\tT\t.\tPASS\tAF=0.002;CLNSIG=Pathogenic\n1\t200\t.\tC\tG\t.\tPASS\tAF=0.47;CLNSIG=Likely_benign');
+    const vcfSummary = summarizeSequenceFile('##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n1\t100\t.\tA\tT\t.\tPASS\tAF=0.002;CLNSIG=Pathogenic;CLNDN=Cystic_fibrosis\n1\t200\t.\tC\tG\t.\tPASS\tAF=0.47;CLNSIG=Likely_benign;CLNDN=not_specified');
     expect(vcfSummary.format).toBe('vcf');
     expect(vcfSummary.variantCount).toBe(2);
     expect(vcfSummary.variants[0].alleleFrequency).toBeLessThan(0.05);
     expect(vcfSummary.pathogenicity).toMatch(/pathogenic|insignificant|benign/i);
+    expect(vcfSummary.variants[0].classification).toBe('Pathogenic');
+    expect(vcfSummary.variants[0].condition).toBe('Cystic fibrosis');
+    expect(vcfSummary.variants[1].condition).toBeUndefined();
+    expect(vcfSummary.pathogenicity).toContain('Cystic fibrosis');
+  });
+
+  it('does not derive clinical classifications from consequence or rarity alone', () => {
+    const summary = summarizeSequenceFile('##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n1\t100\t.\tA\tT\t.\tPASS\tAF=0.00001;CSQ=stop_gained');
+    expect(summary.variants[0].classification).toBe('Not classified in input');
+    expect(summary.pathogenicity).toMatch(/No clinical classification annotation/i);
   });
 });

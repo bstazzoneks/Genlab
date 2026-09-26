@@ -1,4 +1,5 @@
 export interface SequenceAnalysis {
+  sourceSequence?: string;
   length: number;
   gcPercentage: number;
   alphabet: 'DNA' | 'RNA' | 'protein' | 'unknown';
@@ -8,6 +9,11 @@ export interface SequenceAnalysis {
   orfs?: OpenReadingFrame[];
   restrictionSites?: RestrictionSite[];
   primers?: PrimerCandidate[];
+  nucleotideCounts?: Record<string, number>;
+  ambiguousCount?: number;
+  molecularWeightKDa?: number;
+  shannonEntropy?: number;
+  longestHomopolymer?: number;
 }
 
 export interface OpenReadingFrame {
@@ -31,6 +37,14 @@ export interface PrimerCandidate {
   gcPercentage: number;
   meltingTemperature: number;
   warnings: string[];
+}
+
+export interface PrimerDesignOptions {
+  length?: number;
+  minGc?: number;
+  maxGc?: number;
+  minTm?: number;
+  maxTm?: number;
 }
 
 export interface SequenceDifference {
@@ -57,6 +71,7 @@ export interface VariantObservation {
   frequencyPercent: number;
   oneInEvery: number;
   classification: string;
+  condition?: string;
   populationBand: PopulationBand;
 }
 
@@ -71,6 +86,13 @@ export interface SequenceFileSummary {
   pathogenicity: string;
   alleleFrequencyPercent: number;
   oneInEvery: number;
+  recordCount?: number;
+  gcPercentage?: number;
+  ambiguousCount?: number;
+  pathogenicVariantCount?: number;
+  benignVariantCount?: number;
+  chromosomeCount?: number;
+  variantTypes?: Record<string, number>;
 }
 
 const dnaComplement: Record<string, string> = { A: 'T', T: 'A', C: 'G', G: 'C' };
@@ -101,27 +123,46 @@ export const cleanSequence = (sequence: string): string => sequence
   .replaceAll(/[\s0-9.\-]/g, '');
 export const detectAlphabet = (sequence: string): SequenceAnalysis['alphabet'] => {
   const cleaned = cleanSequence(sequence);
-  if (cleaned && [...cleaned].every((base) => nucleotideAlphabet.includes(base))) {
-    return cleaned.includes('U') ? 'RNA' : 'DNA';
+  let nucleotide = Boolean(cleaned);
+  let protein = Boolean(cleaned);
+  let hasUracil = false;
+  for (const symbol of cleaned) {
+    if (!nucleotideAlphabet.includes(symbol)) nucleotide = false;
+    if (!proteinAlphabet.includes(symbol)) protein = false;
+    if (symbol === 'U') hasUracil = true;
   }
-  if (cleaned && [...cleaned].every((aminoAcid) => proteinAlphabet.includes(aminoAcid))) return 'protein';
+  if (nucleotide) return hasUracil ? 'RNA' : 'DNA';
+  if (protein) return 'protein';
   return 'unknown';
 };
-export const calculateGcPercentage = (sequence: string): number => { const cleaned = cleanSequence(sequence); return cleaned.length ? Number((((cleaned.match(/[GC]/g) ?? []).length / cleaned.length) * 100).toFixed(2)) : 0; };
+export const calculateGcPercentage = (sequence: string): number => { const cleaned = cleanSequence(sequence); if (!cleaned.length) return 0; let gc = 0; for (const base of cleaned) if (base === 'G' || base === 'C') gc += 1; return Number(((gc / cleaned.length) * 100).toFixed(2)); };
 export const transcribeDna = (sequence: string): string => cleanSequence(sequence).replaceAll('T', 'U');
-export const reverseComplement = (sequence: string): string => cleanSequence(sequence).split('').reverse().map((base) => dnaComplement[base] ?? 'N').join('');
+export const reverseComplement = (sequence: string): string => { const cleaned = cleanSequence(sequence); let result = ''; for (let index = cleaned.length - 1; index >= 0; index -= 1) result += dnaComplement[cleaned[index]] ?? 'N'; return result; };
 export const translateRna = (sequence: string): string => { const rna = cleanSequence(sequence).replaceAll('U', 'T'); let protein = ''; for (let index = 0; index + 2 < rna.length; index += 3) protein += codons[rna.slice(index, index + 3)] ?? 'X'; return protein; };
 
 const findOrfsOnStrand = (sequence: string, strand: 1 | -1): OpenReadingFrame[] => {
   const results: OpenReadingFrame[] = [];
   for (let frame = 0; frame < 3; frame += 1) {
-    for (let start = frame; start + 2 < sequence.length; start += 3) {
-      if (sequence.slice(start, start + 3) !== 'ATG') continue;
-      for (let end = start + 3; end + 2 < sequence.length; end += 3) {
-        if (!['TAA', 'TAG', 'TGA'].includes(sequence.slice(end, end + 3))) continue;
-        const protein = translateRna(sequence.slice(start, end + 3));
-        if (protein.length >= 3) results.push({ frame: strand * (frame + 1), start: start + 1, end: end + 3, protein });
-        break;
+    const stops: number[] = [];
+    let frameResults = 0;
+    for (let index = frame; index + 2 < sequence.length; index += 3) {
+      if (sequence.startsWith('TAA', index) || sequence.startsWith('TAG', index) || sequence.startsWith('TGA', index)) stops.push(index);
+    }
+    for (let start = frame; start + 2 < sequence.length && frameResults < 4; start += 3) {
+      if (!sequence.startsWith('ATG', start)) continue;
+      let low = 0;
+      let high = stops.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (stops[middle] <= start) low = middle + 1;
+        else high = middle;
+      }
+      const stop = stops[low];
+      if (stop === undefined) continue;
+      const protein = translateRna(sequence.slice(start, stop + 3));
+      if (protein.length >= 3) {
+        results.push({ frame: strand * (frame + 1), start: start + 1, end: stop + 3, protein });
+        frameResults += 1;
       }
     }
   }
@@ -151,23 +192,45 @@ const calculateMeltingTemperature = (sequence: string): number => {
   return 2 * (counts.filter((base) => base === 'A' || base === 'T').length) + 4 * (counts.filter((base) => base === 'G' || base === 'C').length);
 };
 
-const makePrimer = (sequence: string, direction: PrimerCandidate['direction'], start: number, end: number): PrimerCandidate => {
+const makePrimer = (sequence: string, direction: PrimerCandidate['direction'], start: number, end: number, options: Required<PrimerDesignOptions>): PrimerCandidate => {
   const gcPercentage = calculateGcPercentage(sequence);
   const meltingTemperature = calculateMeltingTemperature(sequence);
   const warnings: string[] = [];
-  if (gcPercentage < 40 || gcPercentage > 60) warnings.push('gc-range');
-  if (meltingTemperature < 50 || meltingTemperature > 65) warnings.push('tm-range');
+  if (gcPercentage < options.minGc || gcPercentage > options.maxGc) warnings.push('gc-range');
+  if (meltingTemperature < options.minTm || meltingTemperature > options.maxTm) warnings.push('tm-range');
   if (/(A{5,}|T{5,}|G{5,}|C{5,})/.test(sequence)) warnings.push('homopolymer');
   return { direction, sequence, start, end, gcPercentage, meltingTemperature, warnings };
 };
 
-export const designPrimers = (sequence: string, length = 20): PrimerCandidate[] => {
+export const designPrimers = (sequence: string, lengthOrOptions: number | PrimerDesignOptions = 20): PrimerCandidate[] => {
   const cleaned = cleanSequence(sequence).replaceAll('U', 'T');
-  if (cleaned.length < length * 2) return [];
-  const forward = cleaned.slice(0, length);
-  const reverseStart = cleaned.length - length;
+  const options: Required<PrimerDesignOptions> = typeof lengthOrOptions === 'number'
+    ? { length: lengthOrOptions, minGc: 40, maxGc: 60, minTm: 50, maxTm: 65 }
+    : { length: 20, minGc: 40, maxGc: 60, minTm: 50, maxTm: 65, ...lengthOrOptions };
+  if (!cleaned.length) return [];
+  const primerLength = Math.min(options.length, cleaned.length);
+  const forward = cleaned.slice(0, primerLength);
+  const reverseStart = Math.max(cleaned.length - primerLength, 0);
   const reverse = reverseComplement(cleaned.slice(reverseStart));
-  return [makePrimer(forward, 'forward', 1, length), makePrimer(reverse, 'reverse', reverseStart + 1, cleaned.length)];
+  return [makePrimer(forward, 'forward', 1, primerLength, { ...options, length: primerLength }), makePrimer(reverse, 'reverse', reverseStart + 1, cleaned.length, { ...options, length: primerLength })];
+};
+
+const calculateSequenceMetrics = (sequence: string): Pick<SequenceAnalysis, 'nucleotideCounts' | 'ambiguousCount' | 'molecularWeightKDa' | 'shannonEntropy' | 'longestHomopolymer'> => {
+  const counts: Record<string, number> = { A: 0, C: 0, G: 0, T: 0, N: 0 };
+  let ambiguousCount = 0;
+  let longestHomopolymer = 0;
+  let currentRun = 0;
+  let previousBase = '';
+  for (const base of sequence) {
+    counts[base] = (counts[base] ?? 0) + 1;
+    if (!'ACGT'.includes(base)) ambiguousCount += 1;
+    currentRun = base === previousBase ? currentRun + 1 : 1;
+    longestHomopolymer = Math.max(longestHomopolymer, currentRun);
+    previousBase = base;
+  }
+  const length = sequence.length || 1;
+  const entropy = Object.values(counts).filter(Boolean).reduce((total, count) => { const probability = count / length; return total - probability * Math.log2(probability); }, 0);
+  return { nucleotideCounts: counts, ambiguousCount, molecularWeightKDa: Number(((sequence.length * 0.33)).toFixed(2)), shannonEntropy: Number(entropy.toFixed(3)), longestHomopolymer };
 };
 
 export const compareSequences = (reference: string, query: string): SequenceComparison => {
@@ -185,7 +248,15 @@ export const compareSequences = (reference: string, query: string): SequenceComp
   return { referenceLength: referenceValue.length, queryLength: queryValue.length, comparedLength, identityPercentage: comparedLength ? Number(((matches / comparedLength) * 100).toFixed(2)) : 0, differences };
 };
 
-export const analyzeSequence = (sequence: string): SequenceAnalysis => { const cleaned = cleanSequence(sequence); const alphabet = detectAlphabet(cleaned); if (alphabet === 'DNA') return { length: cleaned.length, gcPercentage: calculateGcPercentage(cleaned), alphabet, transcription: transcribeDna(cleaned), reverseComplement: reverseComplement(cleaned), translation: translateRna(cleaned), orfs: findOpenReadingFrames(cleaned), restrictionSites: findRestrictionSites(cleaned), primers: designPrimers(cleaned) }; if (alphabet === 'RNA') return { length: cleaned.length, gcPercentage: calculateGcPercentage(cleaned), alphabet, translation: translateRna(cleaned) }; return { length: cleaned.length, gcPercentage: 0, alphabet }; };
+export const analyzeSequence = (sequence: string, primerOptions: number | PrimerDesignOptions = 20): SequenceAnalysis => { const cleaned = cleanSequence(sequence); const alphabet = detectAlphabet(cleaned); if (alphabet === 'DNA') return { sourceSequence: sequence, length: cleaned.length, gcPercentage: calculateGcPercentage(cleaned), alphabet, transcription: transcribeDna(cleaned), reverseComplement: reverseComplement(cleaned), translation: translateRna(cleaned), orfs: findOpenReadingFrames(cleaned), restrictionSites: findRestrictionSites(cleaned), primers: designPrimers(cleaned, primerOptions), ...calculateSequenceMetrics(cleaned) }; if (alphabet === 'RNA') return { sourceSequence: sequence, length: cleaned.length, gcPercentage: calculateGcPercentage(cleaned), alphabet, translation: translateRna(cleaned), ...calculateSequenceMetrics(cleaned.replaceAll('U', 'T')) }; return { sourceSequence: sequence, length: cleaned.length, gcPercentage: 0, alphabet };
+};
+
+export const resolveLabAnalysis = (input: string, comparisonSequence = '', primerOptions: number | PrimerDesignOptions = 20, fileSummary?: SequenceFileSummary): { analysis: SequenceAnalysis; comparison?: SequenceComparison; summary?: SequenceFileSummary } => {
+  const analysis = analyzeSequence(input, primerOptions);
+  const comparison = comparisonSequence.trim() ? compareSequences(input, comparisonSequence) : undefined;
+  const summary = input.trim() ? summarizeSequenceFile(input) : fileSummary;
+  return { analysis, comparison, summary };
+};
 
 const parseFastaRecords = (input: string): Array<{ header: string; sequence: string }> => {
   const lines = input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -216,20 +287,19 @@ const inferPopulationBand = (alleleFrequency?: number): PopulationBand => {
   return 'very-rare';
 };
 
-const inferVariantClassification = (variantType: string, alleleFrequency?: number, info = ''): string => {
-  const normalized = `${variantType} ${info}`.toLowerCase();
-  const pathogenicSignals = ['pathogenic', 'stop_gain', 'stop-gained', 'frameshift', 'splice', 'nonsense', 'missense'];
-  const benignSignals = ['benign', 'likely_benign', 'synonymous', 'intron', 'intergenic'];
+const parseClinicalSignificance = (info: string): string => {
+  const value = info.match(/(?:^|;)CLNSIG=([^;]+)/i)?.[1]?.split(/[|,]/)[0]?.replaceAll('_', ' ').trim();
+  return value || 'Not classified in input';
+};
 
-  if (pathogenicSignals.some((marker) => normalized.includes(marker))) return alleleFrequency !== undefined && alleleFrequency < 0.01 ? 'Likely pathogenic' : 'Pathogenic / clinically significant';
-  if (benignSignals.some((marker) => normalized.includes(marker))) return alleleFrequency !== undefined && alleleFrequency > 0.05 ? 'Common benign variant' : 'Likely benign';
-  if (alleleFrequency !== undefined) {
-    if (alleleFrequency > 0.05) return 'Common population variant';
-    if (alleleFrequency > 0.01) return 'Insignificant / low impact';
-    if (alleleFrequency > 0.001) return 'Rare variant';
-    return 'Very rare / potentially relevant';
-  }
-  return 'Insignificant / uncertain';
+const parseClinicalCondition = (info: string, classification: string): string | undefined => {
+  if (!classification.toLocaleLowerCase().split(/[;,|/]/).some((value) => ['pathogenic', 'likely pathogenic', 'risk factor'].includes(value.trim()))) return undefined;
+  const raw = info.match(/(?:^|;)CLNDN=([^;]+)/i)?.[1];
+  if (!raw) return undefined;
+  const values = raw.split(/[|,]/).map((value) => {
+    try { return decodeURIComponent(value).replaceAll('_', ' ').trim(); } catch { return value.replaceAll('_', ' ').trim(); }
+  }).filter((value) => value && !/^(not specified|not provided|unknown|unclassified)$/i.test(value) && !/^(?:[A-Z0-9-]+[- ]?)?related disorder$/i.test(value));
+  return [...new Set(values)].join('; ') || undefined;
 };
 
 const parseAlleleFrequency = (info: string): number | undefined => {
@@ -257,8 +327,7 @@ const summarizeVariantLine = (line: string): VariantObservation | undefined => {
   const alleleFrequency = parseAlleleFrequency(info);
   const frequencyPercent = alleleFrequency === undefined ? 0 : Number((alleleFrequency * 100).toFixed(4));
   const oneInEvery = alleleFrequency && alleleFrequency > 0 ? Math.max(1, Math.round(1 / alleleFrequency)) : 0;
-  const variantType = reference.length === alternate.length ? (reference.length === 1 ? 'SNV' : 'indel') : reference.length < alternate.length ? 'insertion' : 'deletion';
-
+  const classification = parseClinicalSignificance(info);
   return {
     position,
     reference,
@@ -266,7 +335,8 @@ const summarizeVariantLine = (line: string): VariantObservation | undefined => {
     alleleFrequency,
     frequencyPercent,
     oneInEvery,
-    classification: inferVariantClassification(variantType, alleleFrequency, info),
+    classification,
+    condition: parseClinicalCondition(info, classification),
     populationBand: inferPopulationBand(alleleFrequency),
   };
 };
@@ -289,16 +359,15 @@ export const summarizeSequenceFile = (input: string): SequenceFileSummary => {
       ? `VCF file with ${variants.length} variant call${variants.length === 1 ? '' : 's'}; the most frequent allele is ${strongest?.alleleFrequency ? (strongest.alleleFrequency * 100).toFixed(2) : '0.00'}% in the population.`
       : 'VCF file loaded but no valid variant rows were detected.';
 
-    const pathogenicity = variants.some((variant) => /pathogenic|rare|very-rare/i.test(variant.classification))
-      ? 'Likely pathogenic / population rare'
-      : variants.some((variant) => /benign|common/i.test(variant.classification))
-        ? 'Likely benign / insignificant'
-        : 'Insignificant / uncertain';
+    const classifications = [...new Set(variants.map((variant) => variant.classification).filter((value) => value !== 'Not classified in input'))];
+    const reportedConditions = [...new Set(variants.map((variant) => variant.condition).filter((condition): condition is string => Boolean(condition)))];
+    const pathogenicity = [classifications.join('; '), reportedConditions.length ? `Conditions supplied in VCF: ${reportedConditions.join('; ')}` : ''].filter(Boolean).join('; ') || 'No clinical classification annotation in this VCF.';
 
+    const variantTypes = variants.reduce<Record<string, number>>((counts, variant) => { const type = variant.reference.length === variant.alternate.length ? 'SNV / substitution' : variant.reference.length < variant.alternate.length ? 'Insertion' : 'Deletion'; counts[type] = (counts[type] ?? 0) + 1; return counts; }, {});
     return {
       format: 'vcf',
       fileTypeLabel: 'VCF',
-      geneCount: Math.max(1, new Set(content.split(/\r?\n/).filter((line) => line.startsWith('#CHROM')).map(() => 'chr')).size),
+      geneCount: 0,
       totalLength: variants.reduce((total, variant) => total + Math.max(1, variant.position), 0),
       variantCount: variants.length,
       variants,
@@ -306,35 +375,42 @@ export const summarizeSequenceFile = (input: string): SequenceFileSummary => {
       pathogenicity,
       alleleFrequencyPercent: strongest?.frequencyPercent ?? 0,
       oneInEvery: strongest?.oneInEvery ?? 0,
+      recordCount: variants.length,
+      pathogenicVariantCount: variants.filter((variant) => /^(pathogenic|likely pathogenic)(?:\b|\/)/i.test(variant.classification)).length,
+      benignVariantCount: variants.filter((variant) => /^(benign|likely benign)(?:\b|\/)/i.test(variant.classification)).length,
+      chromosomeCount: new Set(content.split(/\r?\n/).map((line) => line.trim().split(/\s+/)[0]).filter((chromosome) => chromosome && chromosome !== '#CHROM' && !chromosome.startsWith('#'))).size,
+      variantTypes,
     };
   }
 
   const fastaRecords = parseFastaRecords(content);
   if (fastaRecords.length) {
     const sequences = fastaRecords.map((record) => record.sequence).filter((sequence) => sequence.length > 0);
-    const ambiguousSites = sequences.flatMap((sequence) => [...sequence].map((base, index) => ({ base, index })).filter(({ base }) => /[RYSWKMBDHVN]/.test(base)));
-    const candidates = ambiguousSites.slice(0, 12).map(({ base, index }) => ({
-      position: index + 1,
-      reference: 'N',
-      alternate: base,
-      alleleFrequency: undefined,
-      frequencyPercent: 0,
-      oneInEvery: 0,
-      classification: 'Insignificant / uncertain candidate variant',
-      populationBand: 'unknown' as const,
-    }));
+    let ambiguousCount = 0;
+    let gcCount = 0;
+    let nucleotideCount = 0;
+    for (const sequence of sequences) {
+      for (const base of sequence) {
+        nucleotideCount += 1;
+        if (base === 'G' || base === 'C') gcCount += 1;
+        if (/[RYSWKMBDHVN]/.test(base)) ambiguousCount += 1;
+      }
+    }
 
     return {
       format: 'fasta',
       fileTypeLabel: 'FASTA',
       geneCount: fastaRecords.length,
       totalLength: sequences.reduce((total, sequence) => total + sequence.length, 0),
-      variantCount: candidates.length,
-      variants: candidates,
-      populationSummary: candidates.length ? `FASTA file with ${candidates.length} candidate variant position${candidates.length === 1 ? '' : 's'}; population frequency is not available without a VCF annotation.` : 'FASTA file loaded without explicit variant annotations; no population frequency data is available.',
-      pathogenicity: candidates.length ? 'Insignificant / uncertain until VCF annotations are added' : 'No pathogenicity signal detected in this FASTA sequence',
+      variantCount: 0,
+      variants: [],
+      populationSummary: 'FASTA contains sequence data, not variant calls. No variants are inferred from ambiguous bases.',
+      pathogenicity: 'No clinical classification data is present in FASTA sequence data.',
       alleleFrequencyPercent: 0,
       oneInEvery: 0,
+      recordCount: sequences.length,
+      gcPercentage: nucleotideCount ? Number(((gcCount / nucleotideCount) * 100).toFixed(2)) : 0,
+      ambiguousCount,
     };
   }
 

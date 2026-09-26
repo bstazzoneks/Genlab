@@ -11,6 +11,14 @@ interface ClinvarVariation { variation_name?: string; cdna_change?: string; vari
 interface ClinvarRecord { uid?: string; accession?: string; variation_set?: ClinvarVariation[]; germline_classification?: { description?: string; review_status?: string; trait_set?: Array<{ trait_name?: string }>; }; genes?: Array<{ geneid?: string; symbol?: string }>; molecular_consequence_list?: string[]; protein_change?: string; }
 interface ClinvarSummaryResponse { result?: { uids?: string[]; [id: string]: ClinvarRecord | string[] | undefined }; }
 
+const cleanTraits = (traits: Array<{ trait_name?: string }> | undefined): string[] => [...new Set((traits ?? [])
+  .map((trait) => trait.trait_name?.trim())
+  .filter((name): name is string => Boolean(name))
+  .filter((name) => !/^(not specified|not provided|not available|unknown|unclassified|other|see .*|not applicable)$/i.test(name))
+  .filter((name) => !/^(?:[A-Z0-9-]+[- ]?)?related disorder$/i.test(name))
+  .filter((name) => !/^variant of unknown significance$/i.test(name)))];
+const hasDiseaseAssociatedClassification = (classification?: string): boolean => (classification ?? '').toLocaleLowerCase().split(/[;,|/]/).some((value) => ['pathogenic', 'likely pathogenic', 'risk factor'].includes(value.trim()));
+
 const failure = <T>(errorCode: ServiceResult<T>['errorCode'], message: string): ServiceResult<T> => ({ status: 'error', errorCode, message, dataMode: 'live' });
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 const sourceFor = (record: ClinvarRecord, retrievedAt: string): ScientificSource => ({ id: `clinvar-${record.uid ?? record.accession ?? 'record'}`, name: 'ClinVar', category: 'curated-database', identifier: record.accession, url: record.uid ? `https://www.ncbi.nlm.nih.gov/clinvar/variation/${encodeURIComponent(record.uid)}/` : undefined, retrievedAt, limitations: ['Clinical interpretations are database submissions and may change over time.'] });
@@ -48,7 +56,7 @@ const normalize = (record: ClinvarRecord, geneId: string, retrievedAt: string): 
     consequence: record.molecular_consequence_list?.[0],
     clinicalSignificance: record.germline_classification?.description,
     reviewStatus: record.germline_classification?.review_status,
-    condition: record.germline_classification?.trait_set?.map((trait) => trait.trait_name).filter(Boolean).join('; '),
+    condition: hasDiseaseAssociatedClassification(record.germline_classification?.description) ? cleanTraits(record.germline_classification?.trait_set).join('; ') || undefined : undefined,
     evidence: [source],
   };
 };
@@ -85,7 +93,8 @@ export const createClinvarVariantAdapter = (): VariantService => ({
     try {
       return await withTimeout(async (signal) => {
         const accession = id.toLocaleUpperCase();
-        const search = await fetchJson<ClinvarSearchResponse>(`${baseUrl}/esearch.fcgi?db=clinvar&term=${encodeURIComponent(`${accession}[Accession]`)}&retmode=json&retmax=1`, signal);
+        const term = /^RS\d+$/i.test(id) ? `${id}[All Fields]` : `${accession}[Accession]`;
+        const search = await fetchJson<ClinvarSearchResponse>(`${baseUrl}/esearch.fcgi?db=clinvar&term=${encodeURIComponent(term)}&retmode=json&retmax=1`, signal);
         const ids = search.esearchresult?.idlist ?? (accession.replace(/^VCV/, '').replace(/^0+/, '') ? [accession.replace(/^VCV/, '').replace(/^0+/, '')] : []);
         const result: ServiceResult<Variant[]> = ids.length ? await summarize(ids, '', signal) : { status: 'ok', data: [], dataMode: 'live' };
         return result.data?.[0] ? { status: 'ok', data: result.data[0], dataMode: 'live' as const } : failure<Variant>('not-found', 'No ClinVar variant record was found.');
