@@ -1,5 +1,4 @@
 import type { SequenceAnalysis, SequenceComparison } from './sequence';
-import { deleteCloudExperiment, hasCloudSession, pullExperiments, syncExperiment as syncCloudExperiment } from '../services/cloud';
 
 export interface ExperimentRecord {
   id: string;
@@ -14,7 +13,6 @@ export interface ExperimentRecord {
   tags: string[];
   references: NotebookReference[];
   dataPoints: NotebookDataPoint[];
-  ownerEmail?: string;
 }
 
 export interface NotebookDataPoint {
@@ -35,7 +33,13 @@ const storageKey = 'genelab-experiments';
 const readExperiments = (): ExperimentRecord[] => {
   try {
     const value = JSON.parse(localStorage.getItem(storageKey) ?? '[]');
-    return Array.isArray(value) ? value as ExperimentRecord[] : [];
+    if (!Array.isArray(value)) return [];
+    const experiments = value.map((item) => {
+      const { ownerEmail: _ownerEmail, ...experiment } = item as ExperimentRecord & { ownerEmail?: string };
+      return normalizeExperiment(experiment);
+    });
+    if (value.some((item) => typeof item === 'object' && item !== null && 'ownerEmail' in item)) writeExperiments(experiments);
+    return experiments;
   } catch {
     return [];
   }
@@ -44,7 +48,7 @@ const readExperiments = (): ExperimentRecord[] => {
 const writeExperiments = (experiments: ExperimentRecord[]): void => localStorage.setItem(storageKey, JSON.stringify(experiments));
 const normalizeExperiment = (experiment: ExperimentRecord): ExperimentRecord => ({ ...experiment, tags: experiment.tags ?? [], references: experiment.references ?? [], dataPoints: experiment.dataPoints ?? [] });
 
-export const getExperiments = (ownerEmail?: string): ExperimentRecord[] => readExperiments().map(normalizeExperiment).filter((experiment) => !ownerEmail || experiment.ownerEmail === ownerEmail || !experiment.ownerEmail).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+export const getExperiments = (): ExperimentRecord[] => readExperiments().sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
 export const saveExperiment = (experiment: Omit<ExperimentRecord, 'id' | 'createdAt' | 'updatedAt'>): ExperimentRecord => {
   const now = new Date().toISOString();
@@ -54,16 +58,3 @@ export const saveExperiment = (experiment: Omit<ExperimentRecord, 'id' | 'create
 };
 
 export const deleteExperiment = (id: string): void => writeExperiments(readExperiments().filter((experiment) => experiment.id !== id));
-
-export const syncExperimentRecord = async (experiment: ExperimentRecord): Promise<void> => { if (hasCloudSession()) await syncCloudExperiment(experiment); };
-
-export const syncExperimentsFromCloud = async (): Promise<ExperimentRecord[]> => {
-  if (!hasCloudSession()) return getExperiments();
-  const remote = await pullExperiments();
-  const local = readExperiments();
-  const merged = [...remote, ...local.filter((item) => !remote.some((remoteItem) => remoteItem.id === item.id))];
-  writeExperiments(merged);
-  return getExperiments();
-};
-
-export const deleteExperimentEverywhere = async (id: string): Promise<void> => { deleteExperiment(id); if (hasCloudSession()) await deleteCloudExperiment(id); };

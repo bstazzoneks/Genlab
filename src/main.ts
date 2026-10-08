@@ -2,7 +2,7 @@ import './styles/main.css';
 import { getLocale, setLocale, t } from './i18n';
 import { renderGeneDetails, renderSearchPage, renderVariantDetails, renderVariantExplorer } from './components/explorer';
 import { bindVariantAssessment, bindVariantKnowledgeSearch, renderVariantAssessmentPage, renderVariantKnowledgePage } from './components/variantKnowledge';
-import { renderAboutPage, renderAccountPage, renderAssistantPage, renderGeneComparisonPage, renderLabGeneContext, renderLabLoadingPage, renderLabPage, renderLabVcfConditions, renderLiteraturePage, renderNotebookPage, renderSourcesPage, renderWorkspaceSelectionWithNotes } from './components/sitePages';
+import { renderAboutPage, renderAssistantPage, renderGeneComparisonPage, renderGeneIdentificationResults, renderLabGeneContext, renderLabLoadingPage, renderLabPage, renderLabVcfConditions, renderLiteraturePage, renderNotebookPage, renderSourcesPage, renderWorkspaceSelectionWithNotes } from './components/sitePages';
 import { demoGeneService, demoVariantService, applyVariantFilters } from './services/demo';
 import { liveGeneService } from './services/live';
 import { liveVariantService } from './services/liveVariants';
@@ -10,17 +10,21 @@ import { liveLiteratureService } from './services/liveLiterature';
 import SequenceAnalysisWorker from './workers/sequence.worker?worker';
 import { compareSequences, type PrimerDesignOptions, type SequenceAnalysis, type SequenceFileSummary } from './utils/sequence';
 import { addHistoryEntry, getHistory, getSavedItems, isSaved, setNote, toggleSaved, type SavedItemKind } from './utils/workspace';
-import { createAccount, getCurrentAccount, loginAccount, logoutAccount } from './utils/accounts';
-import { deleteExperimentEverywhere, getExperiments, saveExperiment, syncExperimentRecord, syncExperimentsFromCloud, type NotebookDataPoint, type NotebookReference } from './utils/notebook';
+import { deleteExperiment, getExperiments, saveExperiment, type NotebookDataPoint, type NotebookReference } from './utils/notebook';
 import { getVariantKnowledge, searchVariantKnowledge } from './services/variantKnowledge';
+import type { GeneIdentificationResult } from './models/geneIdentification';
+import { annotateVariantWithProvider, clearVariantAnnotationCache, createClinVarIdentifierAdapter, filterDetectedVariants, getVariantComparisonKey, type DetectedVariantFilters } from './services/variantAnnotation';
+import { serializeGeneIdentificationCsv } from './utils/variantExport';
 
-type Route = { kind: 'home' | 'genes' | 'gene' | 'variants' | 'variant' | 'variant-explorer' | 'variant-assessment' | 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'saved' | 'compare' | 'notebook' | 'account' | 'planned'; id?: string; query: URLSearchParams };
+type Route = { kind: 'home' | 'genes' | 'gene' | 'variants' | 'variant' | 'variant-explorer' | 'variant-assessment' | 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'saved' | 'compare' | 'notebook' | 'planned'; id?: string; query: URLSearchParams };
+const clearLegacyAccountStorage = (): void => { try { ['genelab-local-accounts', 'genelab-local-session', 'genelab-cloud-token', 'genelab-cloud-account'].forEach((key) => localStorage.removeItem(key)); } catch { /* Storage may be unavailable in restricted browser contexts. */ } };
+clearLegacyAccountStorage();
 type PlannedRoute = 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'variants';
 
 const plannedRoutes: Record<PlannedRoute, string> = { literature: 'literature', lab: 'lab', assistant: 'assistant', about: 'about', sources: 'sources', variants: 'variants' };
 const navItems: Array<{ route: string; key: Parameters<typeof t>[0] }> = [
   { route: '', key: 'nav.home' }, { route: 'genes', key: 'nav.genes' }, { route: 'variants', key: 'nav.variants' }, { route: 'variant-explorer', key: 'nav.variantExplorer' },
-  { route: 'literature', key: 'nav.literature' }, { route: 'lab', key: 'nav.lab' }, { route: 'assistant', key: 'nav.assistant' }, { route: 'saved', key: 'nav.saved' }, { route: 'notebook', key: 'nav.notebook' }, { route: 'account', key: 'nav.account' },
+  { route: 'literature', key: 'nav.literature' }, { route: 'lab', key: 'nav.lab' }, { route: 'assistant', key: 'nav.assistant' }, { route: 'saved', key: 'nav.saved' }, { route: 'notebook', key: 'nav.notebook' },
   { route: 'about', key: 'nav.about' }, { route: 'sources', key: 'nav.sources' },
 ];
 
@@ -36,7 +40,7 @@ const parseRoute = (): Route => {
   if (segments[0] === 'variant' && segments[1]) return { kind: 'variant', id: decodeURIComponent(segments[1]), query };
   if (segments[0] === 'variant-explorer') return { kind: 'variant-explorer', query };
   if (segments[0] === 'variant-assessment' && segments[1]) return { kind: 'variant-assessment', id: decodeURIComponent(segments[1]), query };
-  if (['literature', 'lab', 'assistant', 'about', 'sources', 'saved', 'compare', 'notebook', 'account'].includes(segments[0])) return { kind: segments[0] as Route['kind'], query };
+  if (['literature', 'lab', 'assistant', 'about', 'sources', 'saved', 'compare', 'notebook'].includes(segments[0])) return { kind: segments[0] as Route['kind'], query };
   if (plannedRoutes[segments[0] as PlannedRoute]) return { kind: 'planned', id: segments[0], query };
   return { kind: 'home', query };
 };
@@ -64,6 +68,67 @@ const bindVariantFilters = (geneId: string): void => document.querySelector<HTML
 const bindVariantSearch = (): void => { const form = document.querySelector<HTMLFormElement>('#variant-search-form'); const input = document.querySelector<HTMLInputElement>('#variant-query'); if (!form || !input) return; form.addEventListener('submit', (event) => { event.preventDefault(); const query = input.value.trim(); if (query) window.location.hash = `#/variants?q=${encodeURIComponent(query)}`; }); };
 const bindLiteratureSearch = (publications: import('./models/scientific').Publication[] = []): void => { document.querySelector<HTMLFormElement>('#literature-search-form')?.addEventListener('submit', (event) => { event.preventDefault(); const query = new FormData(event.currentTarget as HTMLFormElement).get('query')?.toString() ?? ''; window.location.hash = `#/literature?q=${encodeURIComponent(query)}`; }); document.querySelector<HTMLButtonElement>('#export-literature')?.addEventListener('click', () => downloadJson('genelab-bibliography.json', publications.map((publication) => ({ title: publication.title, authors: publication.authors, journal: publication.journal, year: publication.year, identifiers: publication.identifiers, url: publication.url })))); };
 const downloadJson = (filename: string, value: unknown): void => { const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); };
+const downloadIdentificationCsv = (result: GeneIdentificationResult): void => {
+  const blob = new Blob([serializeGeneIdentificationCsv(result)], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'genelab-identification.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+};
+const bindGeneIdentificationExports = (result: GeneIdentificationResult): void => {
+  document.querySelector<HTMLButtonElement>('#export-identification-json')?.addEventListener('click', () => downloadJson('genelab-identification.json', result));
+  document.querySelector<HTMLButtonElement>('#export-identification-csv')?.addEventListener('click', () => downloadIdentificationCsv(result));
+};
+const bindVariantAnnotationFilters = (result: GeneIdentificationResult): void => {
+  const controls = [...document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-variant-filter]')];
+  if (!controls.length) return;
+  const applyFilters = (): void => {
+    const value = (name: string): string => controls.find((control) => control.dataset.variantFilter === name)?.value.trim() ?? '';
+    const number = (name: string): number | undefined => value(name) === '' ? undefined : Number(value(name));
+    const filters: DetectedVariantFilters = {
+      gene: value('gene') || undefined,
+      chromosome: value('chromosome') || undefined,
+      positionFrom: number('positionFrom'),
+      positionTo: number('positionTo'),
+      type: value('type') || undefined,
+      consequence: value('consequence') || undefined,
+      reference: value('reference') || undefined,
+      alternative: value('alternative') || undefined,
+      minimumSamplePrevalence: number('minimumSamplePrevalence'),
+      confidence: value('confidence') || undefined,
+      database: value('database') || undefined,
+      sample: value('sample') || undefined,
+    };
+    const matching = filterDetectedVariants(result.records, filters);
+    const allowedRows = new Set(matching.map(({ record, variant }) => `${result.records.indexOf(record)}:${record.variants.indexOf(variant)}`));
+    const allowedKeys = new Set(matching.map(({ variant }) => getVariantComparisonKey(variant)));
+    document.querySelectorAll<HTMLTableRowElement>('[data-variant-row]').forEach((row) => { row.hidden = !allowedRows.has(`${row.dataset.recordIndex}:${row.dataset.variantIndex}`); });
+    document.querySelectorAll<HTMLElement>('[data-matrix-variant-key]').forEach((row) => { row.hidden = !allowedKeys.has(row.dataset.matrixVariantKey ?? ''); });
+    document.querySelectorAll<HTMLElement>('[data-map-variant-key]').forEach((marker) => { marker.hidden = !allowedKeys.has(marker.dataset.mapVariantKey ?? ''); });
+  };
+  controls.forEach((control) => control.addEventListener('input', applyFilters));
+  document.querySelector<HTMLButtonElement>('#clear-variant-filters')?.addEventListener('click', () => { controls.forEach((control) => { control.value = ''; }); applyFilters(); });
+};
+const bindVariantAnnotationRefresh = (result: GeneIdentificationResult): void => {
+  document.querySelectorAll<HTMLButtonElement>('.refresh-variant-annotation').forEach((button) => button.addEventListener('click', async () => {
+    const identifier = button.dataset.identifier;
+    const record = result.records[Number(button.dataset.recordIndex)];
+    const variantIndex = Number(button.dataset.variantIndex);
+    const variant = record?.variants[variantIndex];
+    if (!identifier || !variant || !record) return;
+    button.disabled = true;
+    clearVariantAnnotationCache(identifier);
+    record.variants[variantIndex] = await annotateVariantWithProvider(variant, createClinVarIdentifierAdapter(liveVariantService));
+    const panel = document.querySelector<HTMLElement>('.identification-results');
+    if (!panel) return;
+    panel.outerHTML = renderGeneIdentificationResults(result);
+    bindGeneIdentificationExports(result);
+    bindVariantAnnotationFilters(result);
+    bindVariantAnnotationRefresh(result);
+  }));
+};
 const readSequenceFile = async (file: File): Promise<string> => { if (file.name.toLocaleLowerCase().endsWith('.gz')) { if (!('DecompressionStream' in globalThis)) throw new Error('gzip-unsupported'); const stream = file.stream().pipeThrough(new DecompressionStream('gzip')); return new Response(stream).text(); } return file.text(); };
 const maxLabInputCharacters = 5_000_000;
 const escapeHtml = (value: string): string => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -74,7 +139,9 @@ const geneHintFromInput = (input: string): string | undefined => {
   const vcfInfo = input.split(/\r?\n/).find((line) => !line.startsWith('#') && line.trim());
   const vcfGene = vcfInfo?.match(/(?:^|;)GENEINFO=([A-Za-z][A-Za-z0-9-]*)/i)?.[1];
   if (vcfGene) return vcfGene;
-  const header = input.split(/\r?\n/).find((line) => line.startsWith('>'))?.slice(1).trim();
+  const fastaHeaders = input.split(/\r?\n/).filter((line) => line.startsWith('>'));
+  if (fastaHeaders.length > 1) return undefined;
+  const header = fastaHeaders[0]?.slice(1).trim();
   if (!header) return undefined;
   const ensemblGeneId = header.match(/\bENSG\d+(?:\.\d+)?\b/i)?.[0];
   if (ensemblGeneId) return ensemblGeneId.toLocaleUpperCase();
@@ -91,17 +158,18 @@ const geneHintFromFileName = (fileName: string): string | undefined => {
   return candidate && !['SEQUENCE', 'GENE', 'TRANSCRIPT', 'PROTEIN', 'SAMPLE', 'UNKNOWN'].includes(candidate) ? candidate : undefined;
 };
 let labAnalysisRequestId = 0;
-const analyzeInWorker = (input: string, comparison: string, primerOptions: PrimerDesignOptions, fileSummary?: SequenceFileSummary): Promise<ReturnType<typeof import('./utils/sequence').resolveLabAnalysis>> => new Promise((resolve, reject) => {
+type LabWorkerResult = ReturnType<typeof import('./utils/sequence').resolveLabAnalysis> & { identification: GeneIdentificationResult };
+const analyzeInWorker = (input: string, comparison: string, primerOptions: PrimerDesignOptions, fileSummary?: SequenceFileSummary, geneHint?: string): Promise<LabWorkerResult> => new Promise((resolve, reject) => {
   const worker = new SequenceAnalysisWorker();
   const id = ++labAnalysisRequestId;
-  worker.addEventListener('message', (event: MessageEvent<{ id: number; result?: ReturnType<typeof import('./utils/sequence').resolveLabAnalysis>; error?: string }>) => {
+  worker.addEventListener('message', (event: MessageEvent<{ id: number; result?: LabWorkerResult; error?: string }>) => {
     if (event.data.id !== id) return;
     worker.terminate();
     if (event.data.result) resolve(event.data.result);
     else reject(new Error(event.data.error ?? 'sequence-analysis-failed'));
   });
   worker.addEventListener('error', () => { worker.terminate(); reject(new Error('sequence-analysis-worker-failed')); }, { once: true });
-  worker.postMessage({ id, input, comparison, primerOptions, fileSummary });
+  worker.postMessage({ id, input, comparison, primerOptions, fileSummary, geneHint });
 });
 const bindLab = (_analysis?: SequenceAnalysis, sequence = '', comparisonSequence = '', _comparison?: ReturnType<typeof compareSequences>, fileSummary?: SequenceFileSummary, _primerOptions: PrimerDesignOptions = {}, geneHint?: string): void => {
   const form = document.querySelector<HTMLFormElement>('#sequence-form');
@@ -117,6 +185,7 @@ const bindLab = (_analysis?: SequenceAnalysis, sequence = '', comparisonSequence
       if (submit?.disabled) return;
       if (submit) submit.disabled = true;
       const formData = new FormData(form);
+      const routeRequestId = latestRequestId;
       const input = formData.get('sequence')?.toString() || sequence;
       const nextGeneHint = geneHintFromInput(input) ?? activeGeneHint;
       const nextComparisonSequence = formData.get('comparison')?.toString() || comparisonSequence;
@@ -133,7 +202,8 @@ const bindLab = (_analysis?: SequenceAnalysis, sequence = '', comparisonSequence
       target.innerHTML = renderLabLoadingPage(nextPrimerOptions, input, nextComparisonSequence);
       try {
         await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
-        const result = await analyzeInWorker(input, nextComparisonSequence, nextPrimerOptions, fileSummary);
+        const result = await analyzeInWorker(input, nextComparisonSequence, nextPrimerOptions, fileSummary, nextGeneHint);
+        if (routeRequestId !== latestRequestId) return;
         const nextAnalysis = result.analysis;
         const nextComparison = result.comparison;
         const nextSummary = result.summary;
@@ -148,10 +218,14 @@ const bindLab = (_analysis?: SequenceAnalysis, sequence = '', comparisonSequence
             if (variantResult.status === 'ok') clinvarVariants = variantResult.data ?? [];
           }
         }
+        if (routeRequestId !== latestRequestId) return;
         const page = compactLabMarkup(renderLabPage(nextAnalysis.alphabet === 'unknown' ? undefined : nextAnalysis, nextAnalysis.alphabet === 'unknown', nextComparison, nextSummary, nextPrimerOptions), nextAnalysis);
         const closingSection = page.lastIndexOf('</section>');
-        const labContext = `${renderLabGeneContext(geneHint, detectedGene, clinvarVariants)}${renderLabVcfConditions(nextSummary)}`;
+        const labContext = `${renderGeneIdentificationResults(result.identification)}${renderLabGeneContext(geneHint, detectedGene, clinvarVariants)}${renderLabVcfConditions(nextSummary)}`;
         target.innerHTML = closingSection < 0 ? page : `${page.slice(0, closingSection)}${labContext}${page.slice(closingSection)}`;
+        bindGeneIdentificationExports(result.identification);
+        bindVariantAnnotationFilters(result.identification);
+        bindVariantAnnotationRefresh(result.identification);
         bindLab(nextAnalysis, input, nextComparisonSequence, nextComparison, nextSummary, nextPrimerOptions, nextGeneHint);
       } catch {
         target.innerHTML = renderLabPage(undefined, true, undefined, fileSummary, nextPrimerOptions);
@@ -180,7 +254,9 @@ const bindLab = (_analysis?: SequenceAnalysis, sequence = '', comparisonSequence
         textarea.value = text;
         textarea.addEventListener('input', () => { activeGeneHint = undefined; }, { once: true });
       }
-      const fileGeneHints = files.map((file) => geneHintFromFileName(file.name)).filter((hint): hint is string => Boolean(hint));
+      const fileGeneHints = files.length === 1 && (text.match(/^>/gm)?.length ?? 0) < 2 && !text.includes('#CHROM')
+        ? files.map((file) => geneHintFromFileName(file.name)).filter((hint): hint is string => Boolean(hint))
+        : [];
       activeGeneHint = new Set(fileGeneHints).size === 1 ? fileGeneHints[0] : undefined;
 
       const fileName = files.map((file) => file.name).join(', ');
@@ -192,11 +268,10 @@ const bindLab = (_analysis?: SequenceAnalysis, sequence = '', comparisonSequence
   }
 };
 const bindAssistant = (): void => document.querySelector<HTMLFormElement>('#assistant-search-form')?.addEventListener('submit', (event) => { event.preventDefault(); const query = new FormData(event.currentTarget as HTMLFormElement).get('query')?.toString() ?? ''; window.location.hash = `#/assistant?q=${encodeURIComponent(query)}`; });
-const bindWorkspaceAction = (kind: SavedItemKind, id: string, label: string, subtitle: string, exportData?: unknown): void => { const host = document.querySelector<HTMLElement>('.record-actions') ?? document.querySelector<HTMLElement>('.record-heading'); if (!host) return; const button = document.createElement('button'); button.className = 'action-button'; button.type = 'button'; const update = (): void => { button.textContent = isSaved(kind, id) ? t('workspace.saved') : t('workspace.save'); }; update(); button.addEventListener('click', () => { toggleSaved({ kind, id, label, subtitle }); update(); }); host.append(button); if (exportData) { const exportButton = document.createElement('button'); exportButton.className = 'action-button'; exportButton.type = 'button'; exportButton.textContent = t('workspace.export'); exportButton.addEventListener('click', () => downloadJson(`genelab-${kind}-${id}.json`, exportData)); host.append(exportButton); const notebookButton = document.createElement('button'); notebookButton.className = 'action-button'; notebookButton.type = 'button'; notebookButton.textContent = t('notebook.addReference'); notebookButton.addEventListener('click', () => { const record = saveExperiment({ title: `${t(`workspace.${kind}`)}: ${label}`, notes: '', tags: [], references: [{ kind, id, label, data: exportData as NotebookReference['data'] }], dataPoints: [], ownerEmail: getCurrentAccount()?.email }); void syncExperimentRecord(record); notebookButton.textContent = t('notebook.saved'); }); host.append(notebookButton); } };
+const bindWorkspaceAction = (kind: SavedItemKind, id: string, label: string, subtitle: string, exportData?: unknown): void => { const host = document.querySelector<HTMLElement>('.record-actions') ?? document.querySelector<HTMLElement>('.record-heading'); if (!host) return; const button = document.createElement('button'); button.className = 'action-button'; button.type = 'button'; const update = (): void => { button.textContent = isSaved(kind, id) ? t('workspace.saved') : t('workspace.save'); }; update(); button.addEventListener('click', () => { toggleSaved({ kind, id, label, subtitle }); update(); }); host.append(button); if (exportData) { const exportButton = document.createElement('button'); exportButton.className = 'action-button'; exportButton.type = 'button'; exportButton.textContent = t('workspace.export'); exportButton.addEventListener('click', () => downloadJson(`genelab-${kind}-${id}.json`, exportData)); host.append(exportButton); const notebookButton = document.createElement('button'); notebookButton.className = 'action-button'; notebookButton.type = 'button'; notebookButton.textContent = t('notebook.addReference'); notebookButton.addEventListener('click', () => { saveExperiment({ title: `${t(`workspace.${kind}`)}: ${label}`, notes: '', tags: [], references: [{ kind, id, label, data: exportData as NotebookReference['data'] }], dataPoints: [] }); notebookButton.textContent = t('notebook.saved'); }); host.append(notebookButton); } };
 const bindCompareSelection = (): void => document.querySelector<HTMLFormElement>('#compare-selection-form')?.addEventListener('submit', (event) => { event.preventDefault(); const ids = new FormData(event.currentTarget as HTMLFormElement).getAll('gene').map((value) => value.toString()); if (ids.length < 4) { window.alert(t('workspace.compareMinimum')); return; } window.location.hash = `#/compare?ids=${encodeURIComponent(ids.join(','))}`; });
 const bindWorkspaceNotes = (): void => document.querySelectorAll<HTMLButtonElement>('.save-note').forEach((button) => button.addEventListener('click', () => { const kind = button.dataset.noteKind as SavedItemKind; const id = button.dataset.noteId ?? ''; const note = document.querySelector<HTMLTextAreaElement>(`[data-note-kind="${kind}"][data-note-id="${id}"]`); if (!note) return; setNote(kind, id, note.value); button.textContent = t('workspace.noteSaved'); }));
-const bindNotebook = (): void => { document.querySelector<HTMLFormElement>('#notebook-entry-form')?.addEventListener('submit', (event) => { event.preventDefault(); const values = new FormData(event.currentTarget as HTMLFormElement); const references: NotebookReference[] = (values.get('references')?.toString() ?? '').split('\n').map((line) => line.trim()).filter(Boolean).map((line) => { const [kindValue, idValue, ...labelParts] = line.split('|'); const kind = ['gene', 'variant', 'publication', 'analysis'].includes(kindValue) ? kindValue as NotebookReference['kind'] : 'analysis'; return { kind, id: idValue || labelParts.join('|'), label: labelParts.join('|') || idValue || line }; }); const dataPoints: NotebookDataPoint[] = (values.get('dataPoints')?.toString() ?? '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 20).map((line, index) => { const separator = line.indexOf('|'); return separator >= 0 ? { label: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() } : { label: `${t('notebook.data')} ${index + 1}`, value: line }; }); const record = saveExperiment({ title: values.get('title')?.toString().trim() || t('notebook.defaultTitle'), notes: values.get('notes')?.toString() ?? '', tags: [], references, dataPoints, ownerEmail: getCurrentAccount()?.email }); void syncExperimentRecord(record); render(); }); document.querySelectorAll<HTMLButtonElement>('.delete-experiment').forEach((button) => button.addEventListener('click', async () => { const id = button.dataset.experimentId; if (id && window.confirm(t('notebook.confirmDelete'))) { await deleteExperimentEverywhere(id); render(); } })); document.querySelectorAll<HTMLButtonElement>('.export-experiment').forEach((button) => button.addEventListener('click', () => { const id = button.dataset.experimentId; const experiment = getExperiments().find((item) => item.id === id); if (experiment) downloadJson(`genelab-${experiment.id}.json`, experiment); })); };
-const bindAccount = (): void => { document.querySelector<HTMLButtonElement>('#logout-account')?.addEventListener('click', () => { logoutAccount(); render(); }); const form = document.querySelector<HTMLFormElement>('#account-form'); const modeButton = document.querySelector<HTMLButtonElement>('#account-login-mode'); if (!form || !modeButton) return; let loginMode = false; modeButton.addEventListener('click', () => { loginMode = !loginMode; modeButton.textContent = loginMode ? t('account.create') : t('account.login'); const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]'); if (submit) submit.textContent = loginMode ? t('account.login') : t('account.create'); }); form.addEventListener('submit', async (event) => { event.preventDefault(); const values = new FormData(form); const email = values.get('email')?.toString() ?? ''; const password = values.get('password')?.toString() ?? ''; try { if (loginMode) await loginAccount(email, password); else await createAccount(email, password); render(); } catch (error) { const message = error instanceof Error && error.message === 'weak-password' ? t('account.weakPassword') : error instanceof Error && error.message === 'account-exists' ? t('account.exists') : t('account.invalid'); let feedback = form.querySelector<HTMLElement>('.account-error'); if (!feedback) { feedback = document.createElement('p'); feedback.className = 'account-error'; form.append(feedback); } feedback.textContent = message; } }); };
+const bindNotebook = (): void => { document.querySelector<HTMLFormElement>('#notebook-entry-form')?.addEventListener('submit', (event) => { event.preventDefault(); const values = new FormData(event.currentTarget as HTMLFormElement); const references: NotebookReference[] = (values.get('references')?.toString() ?? '').split('\n').map((line) => line.trim()).filter(Boolean).map((line) => { const [kindValue, idValue, ...labelParts] = line.split('|'); const kind = ['gene', 'variant', 'publication', 'analysis'].includes(kindValue) ? kindValue as NotebookReference['kind'] : 'analysis'; return { kind, id: idValue || labelParts.join('|'), label: labelParts.join('|') || idValue || line }; }); const dataPoints: NotebookDataPoint[] = (values.get('dataPoints')?.toString() ?? '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 20).map((line, index) => { const separator = line.indexOf('|'); return separator >= 0 ? { label: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() } : { label: `${t('notebook.data')} ${index + 1}`, value: line }; }); saveExperiment({ title: values.get('title')?.toString().trim() || t('notebook.defaultTitle'), notes: values.get('notes')?.toString() ?? '', tags: [], references, dataPoints }); render(); }); document.querySelectorAll<HTMLButtonElement>('.delete-experiment').forEach((button) => button.addEventListener('click', async () => { const id = button.dataset.experimentId; if (id && window.confirm(t('notebook.confirmDelete'))) { deleteExperiment(id); render(); } })); document.querySelectorAll<HTMLButtonElement>('.export-experiment').forEach((button) => button.addEventListener('click', () => { const id = button.dataset.experimentId; const experiment = getExperiments().find((item) => item.id === id); if (experiment) downloadJson(`genelab-${experiment.id}.json`, experiment); })); };
 const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 const getLiveGeneWithRetry = async (id: string): Promise<Awaited<ReturnType<typeof liveGeneService.getGene>>> => {
   let result = await liveGeneService.getGene(id);
@@ -237,8 +312,7 @@ const loadContent = async (route: Route, requestId: number): Promise<void> => {
   if (route.kind === 'lab') { target.innerHTML = renderLabPage(); bindLab(); return; }
   if (route.kind === 'saved') { target.innerHTML = renderWorkspaceSelectionWithNotes(getSavedItems(), getHistory()); bindCompareSelection(); bindWorkspaceNotes(); return; }
   if (route.kind === 'compare') { const savedGeneIds = getSavedItems().filter((item) => item.kind === 'gene').map((item) => item.id); const ids = route.query.get('ids')?.split(',').filter(Boolean) ?? savedGeneIds; const genes: import('./models/scientific').Gene[] = []; for (const id of ids) { if (requestId !== latestRequestId) return; const result = await getLiveGeneWithRetry(id); if (result.status === 'ok' && result.data) genes.push(result.data); } if (requestId !== latestRequestId) return; target.innerHTML = renderGeneComparisonPage(genes); return; }
-  if (route.kind === 'notebook') { let experiments = getExperiments(getCurrentAccount()?.email); try { experiments = await syncExperimentsFromCloud(); } catch { /* Keep local notebook available when the API is offline. */ } if (requestId !== latestRequestId) return; target.innerHTML = renderNotebookPage(experiments); bindNotebook(); return; }
-  if (route.kind === 'account') { target.innerHTML = renderAccountPage(getCurrentAccount()); bindAccount(); return; }
+  if (route.kind === 'notebook') { if (requestId !== latestRequestId) return; target.innerHTML = renderNotebookPage(getExperiments()); bindNotebook(); return; }
   if (route.kind === 'assistant') { const query = route.query.get('q') ?? ''; if (!query) { target.innerHTML = renderAssistantPage(); bindAssistant(); return; } const result = await liveGeneService.getGene(query); if (requestId !== latestRequestId) return; target.innerHTML = renderAssistantPage(result.data, query); bindAssistant(); return; }
   if (route.kind === 'about') { target.innerHTML = renderAboutPage(); return; }
   if (route.kind === 'sources') { target.innerHTML = renderSourcesPage(); return; }

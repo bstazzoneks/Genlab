@@ -64,6 +64,8 @@ export interface SequenceComparison {
 export type PopulationBand = 'common' | 'intermediate' | 'rare' | 'very-rare' | 'unknown';
 
 export interface VariantObservation {
+  chromosome?: string;
+  identifier?: string;
   position: number;
   reference: string;
   alternate: string;
@@ -105,7 +107,7 @@ const codons: Record<string, string> = {
   GGT: 'G', GGC: 'G', GGA: 'G', GGG: 'G',
 };
 
-const nucleotideAlphabet = 'ACGTRYSWKMBDHVN';
+const nucleotideAlphabet = 'ACGTURYSWKMBDHVN';
 const proteinAlphabet = 'ABCDEFGHIKLMNOPQRSTUVWYZX*';
 const restrictionEnzymes: Array<Pick<RestrictionSite, 'enzyme' | 'recognitionSite'>> = [
   { enzyme: 'EcoRI', recognitionSite: 'GAATTC' },
@@ -311,7 +313,7 @@ const parseAlleleFrequency = (info: string): number | undefined => {
   ].map((pattern) => info.match(pattern)?.[1]).find((value): value is string => Boolean(value));
 
   if (!matches) return undefined;
-  const numericValues = matches.split(',').map((value) => Number.parseFloat(value)).filter((value) => Number.isFinite(value));
+  const numericValues = matches.split(',').map((value) => Number.parseFloat(value)).filter((value) => Number.isFinite(value) && value >= 0 && value <= 1);
   return numericValues.length ? Math.max(...numericValues) : undefined;
 };
 
@@ -319,16 +321,19 @@ const summarizeVariantLine = (line: string): VariantObservation | undefined => {
   if (!line || line.startsWith('#')) return undefined;
   const columns = line.split(/\s+/);
   if (columns.length < 8) return undefined;
-  const [, positionValue, , reference, alternate] = columns;
+  const [chromosomeValue, positionValue, identifierValue, reference, alternate] = columns;
   if (!positionValue || !reference || !alternate) return undefined;
 
   const position = Number.parseInt(positionValue, 10);
+  if (!Number.isInteger(position) || position < 1) return undefined;
   const info = columns.slice(7).join(' ');
   const alleleFrequency = parseAlleleFrequency(info);
   const frequencyPercent = alleleFrequency === undefined ? 0 : Number((alleleFrequency * 100).toFixed(4));
   const oneInEvery = alleleFrequency && alleleFrequency > 0 ? Math.max(1, Math.round(1 / alleleFrequency)) : 0;
   const classification = parseClinicalSignificance(info);
   return {
+    chromosome: chromosomeValue && chromosomeValue !== '.' ? chromosomeValue : undefined,
+    identifier: identifierValue && identifierValue !== '.' ? identifierValue : undefined,
     position,
     reference,
     alternate,

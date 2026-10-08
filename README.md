@@ -63,10 +63,18 @@ Local computational tools for educational exploration:
 - Restriction-site detection
 - Primer candidates with GC, melting temperature, and warnings
 - Sequence comparison with identity percentage and positional differences
+- Local gene/reference comparison and SNV, MNV, insertion, and deletion detection when the user supplies one compatible reference
+- Confidence and provenance for each local alignment; unsupported protein matching and unverified header labels are explicitly marked
+- Reference-relative variant minimization and left alignment where the supplied sequence validates the reference allele
+- Consequence/protein effects only when a complete CDS, coding position, and transcript context are supplied to the annotation service
+- Multi-FASTA presence/absence matrix, local sample prevalence, combined filters, and a reference-relative position map
+- Expanded JSON/CSV variant exports with original and normalized representations and evidence
 - Reproducibility notebook records with notes and JSON export
 - Up to 20 custom field/value data points per notebook entry
 
-The calculations are pure TypeScript functions, separated from the UI and covered by unit tests.
+Sequence analysis remains in the existing worker. A bounded local nucleotide aligner compares only user-supplied references; query sequences are not sent to external services. NCBI/Ensembl metadata lookup may use an explicit gene or accession label from the input. BLAST matching is not enabled because NCBI QBlast does not provide browser CORS access. JSON and CSV exports include match evidence and limitations.
+
+Etapa 3 does not infer genomic coordinates, database identifiers, population allele frequencies, or clinical classification from reference-relative calls. ClinVar coordinate matching remains disconnected; existing ClinVar lookup by accession or gene ID is separate. FASTA multi-record summaries report sample presence only, not genotype or allele frequency. A complete CDS/transcript must be supplied explicitly to the coding-consequence service.
 
 ### Evidence Research Assistant
 
@@ -82,7 +90,7 @@ The current assistant organizes retrieved gene fields and their sources. It is i
 - Light and dark themes.
 - Reduced-motion support.
 - Local workspace notes and experiment history.
-- Optional email/password account synchronization without Google or Apple OAuth.
+- Private-by-default local workspace and lab notebook; scientific records stay in the browser unless explicitly exported.
 
 ## Scientific Sources
 
@@ -117,7 +125,7 @@ Database assertions may be incomplete, change over time, or differ between submi
 - GitHub Actions
 - GitHub Pages
 
-The project includes an optional Node.js API for accounts and notebook synchronization. Public scientific APIs are still accessed through provider-specific service adapters, not directly from UI components.
+The project is a static, account-free application. Scientific data retrieval uses provider-specific service adapters; workspace notes, history, and notebook records are stored only in the browser. No scientific input is uploaded for sequence analysis.
 
 ## Architecture
 
@@ -133,7 +141,6 @@ src/
     liveVariants.ts       Live variant service
     liveLiterature.ts     Live literature service
   utils/                  Pure sequence and data-transformation functions
-  server.mjs              Optional account and experiment synchronization API
   styles/                 Theme, responsive, and accessibility styles
   main.ts                 Hash routing and application shell
 docs/
@@ -165,20 +172,6 @@ npm install
 npm run dev
 ```
 
-To enable synchronization between devices, run the API in a second terminal:
-
-```bash
-npm run api
-```
-
-The local API listens on `http://localhost:8787` and stores data in `.data/genelab.json`. For a deployed frontend, set `VITE_API_URL` to the public API URL when building:
-
-```bash
-VITE_API_URL=https://api.example.com/api npm run build
-```
-
-The local account mode remains available when the API is offline. Production deployments should add HTTPS, a persistent database, secure cookies or rotating tokens, email verification, password recovery, rate limiting, backups, and secret management.
-
 Open the local URL shown by Vite. To run the production build locally:
 
 ```bash
@@ -196,8 +189,6 @@ Deployment is automated by [`.github/workflows/deploy-pages.yml`](.github/workfl
 3. Set **Source** to **GitHub Actions**.
 4. Push to `main` or run the workflow manually from the **Actions** tab.
 5. GitHub Actions runs tests, builds `dist/`, and deploys the result.
-
-To enable cloud synchronization in the Pages build, create a repository variable named `VITE_API_URL` under **Settings -> Secrets and variables -> Actions -> Variables**. Its value must be the public URL of the deployed GeneLab API, including `/api`. GitHub Pages hosts the frontend only; `server.mjs` must run separately on a Node-capable service.
 
 The expected public URL is:
 

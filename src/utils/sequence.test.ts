@@ -27,6 +27,18 @@ describe('sequence analysis', () => {
     expect(analyzeSequence('>sequence\nATGNNRY')).toMatchObject({ alphabet: 'DNA', length: 7 });
   });
 
+  it('recognizes RNA sequences containing uracil', () => {
+    expect(analyzeSequence('AUGGCC')).toMatchObject({ alphabet: 'RNA', length: 6, translation: 'MA' });
+  });
+
+  it('rejects invalid VCF positions and does not treat out-of-range AF as a frequency', () => {
+    const invalidPosition = summarizeSequenceFile('##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n1\t0\t.\tA\tG\t.\tPASS\tAF=0.2');
+    const invalidFrequency = summarizeSequenceFile('##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n1\t10\trs123\tA\tG\t.\tPASS\tAF=1.5');
+
+    expect(invalidPosition.variants).toEqual([]);
+    expect(invalidFrequency.variants[0]).toMatchObject({ position: 10, chromosome: '1', identifier: 'rs123', alleleFrequency: undefined });
+  });
+
   it('finds ORFs, restriction sites, and primer candidates', () => {
     const sequence = 'ATGAAAGAATTCGGATCCTAA';
     expect(findOpenReadingFrames(sequence)).toContainEqual(expect.objectContaining({ frame: 1, start: 1 }));
@@ -51,6 +63,7 @@ describe('sequence analysis', () => {
     const vcfSummary = summarizeSequenceFile('##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n1\t100\t.\tA\tT\t.\tPASS\tAF=0.002;CLNSIG=Pathogenic;CLNDN=Cystic_fibrosis\n1\t200\t.\tC\tG\t.\tPASS\tAF=0.47;CLNSIG=Likely_benign;CLNDN=not_specified');
     expect(vcfSummary.format).toBe('vcf');
     expect(vcfSummary.variantCount).toBe(2);
+    expect(vcfSummary.variants[0].chromosome).toBe('1');
     expect(vcfSummary.variants[0].alleleFrequency).toBeLessThan(0.05);
     expect(vcfSummary.pathogenicity).toMatch(/pathogenic|insignificant|benign/i);
     expect(vcfSummary.variants[0].classification).toBe('Pathogenic');

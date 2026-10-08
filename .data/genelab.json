@@ -1,25 +1,10 @@
 {
-  "accounts": [
-    {
-      "email": "genelab-test-1790229227@example.com",
-      "salt": "qH2lOEXkfNnvYJakM/Wu2A==",
-      "hash": "8EiPWARCGI7Ag8BoVVFp77trgsDD7935UZlsLX/qy8Te0UOSBWVrEZFBg9UgunVbikLWUBzucbsN5omRO6xAvQ==",
-      "createdAt": "2026-09-24T05:53:47.815Z"
-    },
-    {
-      "email": "persist-1790229514@example.com",
-      "salt": "gWCOPo8SILT9R+ub5epIfA==",
-      "hash": "LHxwd5vXn5ukbluHeixuG3aFjVcep0qPzUWdEn/94oFpdE8pC/wz0fL/GvAB+luHymysg629d8kDIod/epcL+g==",
-      "createdAt": "2026-09-24T05:58:34.786Z"
-    }
-  ],
   "experiments": [
     {
       "id": "EXP-PERSIST",
       "title": "Persisted entry",
       "references": [],
       "notes": "restart test",
-      "ownerEmail": "persist-1790229514@example.com",
       "updatedAt": "2026-09-24T05:58:34.829Z"
     },
     {
@@ -33,15 +18,7 @@
       "sequence": "ATGC",
       "notes": "test",
       "tags": [],
-      "ownerEmail": "genelab-test-1790229227@example.com",
       "updatedAt": "2026-09-24T05:53:47.870Z"
-    }
-  ],
-  "sessions": [
-    {
-      "token": "IVqmDktNmzNGtrjjkqoEssLJnp451lB1g6XTtZn0QJk",
-      "email": "persist-1790229514@example.com",
-      "expiresAt": 1792821514786
     }
   ]
 }
