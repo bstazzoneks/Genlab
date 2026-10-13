@@ -6,7 +6,8 @@ export const plannedSources: ScientificSource[] = [
   { id: 'clinvar', name: 'ClinVar', category: 'curated-database', url: 'https://www.ncbi.nlm.nih.gov/clinvar/', limitations: ['Clinical assertions are database submissions that require careful interpretation and may change over time. Connected for on-demand variant retrieval.'] },
   { id: 'dbsnp', name: 'dbSNP', category: 'reference-database', url: 'https://www.ncbi.nlm.nih.gov/snp/', limitations: ['Adapter not connected in Phase 2.'] },
   { id: 'ensembl', name: 'Ensembl', category: 'reference-database', url: 'https://www.ensembl.org/', limitations: ['Connected as best-effort gene detail enrichment in Phase 2.5.'] },
-  { id: 'uniprot', name: 'UniProt', category: 'curated-database', url: 'https://www.uniprot.org/', limitations: ['Adapter not connected in Phase 2.'] },
+  { id: 'uniprot', name: 'UniProt', category: 'curated-database', url: 'https://www.uniprot.org/', limitations: ['i18n:sourceLimit.uniprot'] },
   { id: 'europepmc', name: 'Europe PMC', category: 'primary-literature', url: 'https://europepmc.org/', limitations: ['Not connected; PubMed is the current literature provider.'] },
-  { id: 'hgnc', name: 'HGNC', category: 'curated-database', url: 'https://www.genenames.org/', limitations: ['Adapter not connected in Phase 2.'] },
+  { id: 'hgnc', name: 'HGNC', category: 'curated-database', url: 'https://www.genenames.org/', limitations: ['i18n:sourceLimit.hgnc'] },
+  { id: 'quickgo', name: 'QuickGO', category: 'reference-database', url: 'https://www.ebi.ac.uk/QuickGO/', limitations: ['i18n:sourceLimit.quickgo'] },
 ];

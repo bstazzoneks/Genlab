@@ -1,0 +1,6 @@
+.protein-record { display: grid; gap: 1rem; margin-top: 2rem; }
+.protein-sequence { overflow-wrap: anywhere; text-align: left; }
+.protein-crossrefs { display: grid; gap: .45rem; list-style: none; margin: 0; overflow-wrap: anywhere; padding: 0; }
+.go-list { display: grid; gap: .5rem; list-style: none; margin: 0; padding: 0; }
+.go-list li { border-top: 1px solid var(--line); display: grid; gap: .35rem; min-width: 0; padding: .8rem 0; }
+.go-list .metadata { margin: 0; }

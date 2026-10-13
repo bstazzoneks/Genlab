@@ -1,11 +1,14 @@
 import './styles/main.css';
+import './styles/protein.css';
 import { getLocale, setLocale, t } from './i18n';
-import { renderGeneDetails, renderSearchPage, renderVariantDetails, renderVariantExplorer } from './components/explorer';
+import { renderGeneDetailsWithNomenclature, renderProteinExplorerPage, renderSearchPage, renderSearchPageWithAliasSuggestions, renderVariantDetails, renderVariantExplorer } from './components/explorer';
 import { bindVariantAssessment, bindVariantKnowledgeSearch, renderVariantAssessmentPage, renderVariantKnowledgePage } from './components/variantKnowledge';
 import { renderAboutPage, renderAssistantPage, renderGeneComparisonPage, renderGeneIdentificationResults, renderLabGeneContext, renderLabLoadingPage, renderLabPage, renderLabVcfConditions, renderLiteraturePage, renderNotebookPage, renderSourcesPage, renderWorkspaceSelectionWithNotes } from './components/sitePages';
 import { demoGeneService, demoVariantService, applyVariantFilters } from './services/demo';
 import { liveGeneService } from './services/live';
 import { liveVariantService } from './services/liveVariants';
+import { liveProteinService } from './services/liveProteins';
+import { createHgncAdapter } from './services/adapters/hgncAdapter';
 import { liveLiteratureService } from './services/liveLiterature';
 import SequenceAnalysisWorker from './workers/sequence.worker?worker';
 import { compareSequences, type PrimerDesignOptions, type SequenceAnalysis, type SequenceFileSummary } from './utils/sequence';
@@ -16,14 +19,15 @@ import type { GeneIdentificationResult } from './models/geneIdentification';
 import { annotateVariantWithProvider, clearVariantAnnotationCache, createClinVarIdentifierAdapter, filterDetectedVariants, getVariantComparisonKey, type DetectedVariantFilters } from './services/variantAnnotation';
 import { serializeGeneIdentificationCsv } from './utils/variantExport';
 
-type Route = { kind: 'home' | 'genes' | 'gene' | 'variants' | 'variant' | 'variant-explorer' | 'variant-assessment' | 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'saved' | 'compare' | 'notebook' | 'planned'; id?: string; query: URLSearchParams };
+type Route = { kind: 'home' | 'genes' | 'gene' | 'proteins' | 'variants' | 'variant' | 'variant-explorer' | 'variant-assessment' | 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'saved' | 'compare' | 'notebook' | 'planned'; id?: string; query: URLSearchParams };
 const clearLegacyAccountStorage = (): void => { try { ['genelab-local-accounts', 'genelab-local-session', 'genelab-cloud-token', 'genelab-cloud-account'].forEach((key) => localStorage.removeItem(key)); } catch { /* Storage may be unavailable in restricted browser contexts. */ } };
 clearLegacyAccountStorage();
 type PlannedRoute = 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'variants';
 
 const plannedRoutes: Record<PlannedRoute, string> = { literature: 'literature', lab: 'lab', assistant: 'assistant', about: 'about', sources: 'sources', variants: 'variants' };
+const hgncAdapter = createHgncAdapter();
 const navItems: Array<{ route: string; key: Parameters<typeof t>[0] }> = [
-  { route: '', key: 'nav.home' }, { route: 'genes', key: 'nav.genes' }, { route: 'variants', key: 'nav.variants' }, { route: 'variant-explorer', key: 'nav.variantExplorer' },
+  { route: '', key: 'nav.home' }, { route: 'genes', key: 'nav.genes' }, { route: 'proteins', key: 'nav.proteins' }, { route: 'variants', key: 'nav.variants' }, { route: 'variant-explorer', key: 'nav.variantExplorer' },
   { route: 'literature', key: 'nav.literature' }, { route: 'lab', key: 'nav.lab' }, { route: 'assistant', key: 'nav.assistant' }, { route: 'saved', key: 'nav.saved' }, { route: 'notebook', key: 'nav.notebook' },
   { route: 'about', key: 'nav.about' }, { route: 'sources', key: 'nav.sources' },
 ];
@@ -36,6 +40,7 @@ const parseRoute = (): Route => {
   if (!segments.length) return { kind: 'home', query };
   if (segments[0] === 'genes') return { kind: 'genes', query };
   if (segments[0] === 'gene' && segments[1]) return { kind: 'gene', id: decodeURIComponent(segments[1]), query };
+  if (segments[0] === 'proteins') return { kind: 'proteins', query };
   if (segments[0] === 'variants') return { kind: 'variants', query };
   if (segments[0] === 'variant' && segments[1]) return { kind: 'variant', id: decodeURIComponent(segments[1]), query };
   if (segments[0] === 'variant-explorer') return { kind: 'variant-explorer', query };
@@ -64,6 +69,25 @@ const renderShell = (route: Route): void => {
 };
 
 const bindGeneSearch = (): void => document.querySelector<HTMLFormElement>('#gene-search-form')?.addEventListener('submit', (event) => { event.preventDefault(); const query = new FormData(event.currentTarget as HTMLFormElement).get('query')?.toString() ?? ''; window.location.hash = `#/genes?q=${encodeURIComponent(query)}`; });
+const bindProteinSearch = (): void => document.querySelector<HTMLFormElement>('#protein-search-form')?.addEventListener('submit', (event) => { event.preventDefault(); const query = new FormData(event.currentTarget as HTMLFormElement).get('query')?.toString() ?? ''; window.location.hash = `#/proteins?q=${encodeURIComponent(query)}`; });
+let pendingProteinSequence: string | undefined;
+const bindProteinToLab = (protein: import('./models/scientific').Protein): void => {
+  document.querySelector<HTMLButtonElement>('#protein-to-lab')?.addEventListener('click', () => {
+    if (!protein.canonicalSequence) return;
+    pendingProteinSequence = `>protein:${protein.accession ?? protein.id} ${protein.name}\n${protein.canonicalSequence}`;
+    const query = new URLSearchParams({ protein: protein.accession ?? protein.id, gene: protein.geneId });
+    window.location.hash = `#/lab?${query.toString()}`;
+  });
+};
+const bindGeneProteinLink = (gene: import('./models/scientific').Gene): void => {
+  const actions = document.querySelector<HTMLElement>('.record-actions');
+  if (!actions) return;
+  const link = document.createElement('a');
+  link.className = 'action-link';
+  link.href = `#/proteins?gene=${encodeURIComponent(gene.id)}`;
+  link.textContent = t('protein.viewProtein');
+  actions.append(link);
+};
 const bindVariantFilters = (geneId: string): void => document.querySelector<HTMLFormElement>('#variant-filters')?.addEventListener('submit', (event) => { event.preventDefault(); const data = new FormData(event.currentTarget as HTMLFormElement); const type = data.get('type')?.toString() ?? ''; const consequence = data.get('consequence')?.toString() ?? ''; const significance = data.get('significance')?.toString() ?? ''; const transcript = data.get('transcript')?.toString() ?? ''; window.location.hash = `#/variants?gene=${encodeURIComponent(geneId)}&type=${encodeURIComponent(type)}&consequence=${encodeURIComponent(consequence)}&significance=${encodeURIComponent(significance)}&transcript=${encodeURIComponent(transcript)}`; });
 const bindVariantSearch = (): void => { const form = document.querySelector<HTMLFormElement>('#variant-search-form'); const input = document.querySelector<HTMLInputElement>('#variant-query'); if (!form || !input) return; form.addEventListener('submit', (event) => { event.preventDefault(); const query = input.value.trim(); if (query) window.location.hash = `#/variants?q=${encodeURIComponent(query)}`; }); };
 const bindLiteratureSearch = (publications: import('./models/scientific').Publication[] = []): void => { document.querySelector<HTMLFormElement>('#literature-search-form')?.addEventListener('submit', (event) => { event.preventDefault(); const query = new FormData(event.currentTarget as HTMLFormElement).get('query')?.toString() ?? ''; window.location.hash = `#/literature?q=${encodeURIComponent(query)}`; }); document.querySelector<HTMLButtonElement>('#export-literature')?.addEventListener('click', () => downloadJson('genelab-bibliography.json', publications.map((publication) => ({ title: publication.title, authors: publication.authors, journal: publication.journal, year: publication.year, identifiers: publication.identifiers, url: publication.url })))); };
@@ -299,24 +323,126 @@ const renderVariantGene = async (target: HTMLDivElement, requestId: number, rout
   bindVariantSearch();
 };
 
+const resolveHgncSuggestions = async (query: string, existingGenes: import('./models/scientific').Gene[]): Promise<import('./components/explorer').HgncAliasSuggestion[]> => {
+  const result = await hgncAdapter.resolvePreviousSymbol(query);
+  if (result.status !== 'ok' || !result.data) return [];
+  const suggestions: import('./components/explorer').HgncAliasSuggestion[] = [];
+  for (const nomenclature of result.data) {
+    const ncbiId = nomenclature.crossReferences['NCBI Gene']?.[0];
+    const ensemblId = nomenclature.crossReferences.Ensembl?.[0];
+    let gene: import('./models/scientific').Gene | undefined;
+    const identifier = ncbiId ?? ensemblId;
+    if (identifier) {
+      const resolved = await liveGeneService.getGene(identifier);
+      if (resolved.status === 'ok' && resolved.data?.symbol.toLocaleLowerCase() === nomenclature.approvedSymbol.toLocaleLowerCase()) gene = resolved.data;
+    }
+    if (!gene) {
+      const searched = await liveGeneService.search(nomenclature.approvedSymbol);
+      gene = searched.data?.find((candidate) => candidate.symbol.toLocaleLowerCase() === nomenclature.approvedSymbol.toLocaleLowerCase());
+    }
+    if (gene && !suggestions.some((item) => item.gene.id === gene!.id)) suggestions.push({ query, gene, nomenclature });
+  }
+  return suggestions.filter((suggestion) => !existingGenes.some((gene) => gene.id === suggestion.gene.id && gene.symbol.toLocaleLowerCase() === query.toLocaleLowerCase()));
+};
+
 const loadContent = async (route: Route, requestId: number): Promise<void> => {
   const target = document.querySelector<HTMLDivElement>('#page-content');
   if (!target) return;
   const demoMode = route.query.get('demo') === '1';
   const geneService = demoMode ? demoGeneService : liveGeneService;
-  if (route.kind === 'genes') { const result = await geneService.search(route.query.get('q') ?? ''); if (requestId !== latestRequestId) return; target.innerHTML = result.status === 'ok' ? renderSearchPage(result.data ?? [], route.query.get('q') ?? '', result.dataMode ?? 'live') : renderError(result.errorCode, route.query.get('q') ?? ''); bindGeneSearch(); return; }
+  if (route.kind === 'genes') {
+    const query = route.query.get('q') ?? '';
+    const result = await geneService.search(query);
+    if (requestId !== latestRequestId) return;
+    if (result.status !== 'ok') { target.innerHTML = renderError(result.errorCode, query); bindGeneSearch(); return; }
+    const genes = result.data ?? [];
+    const suggestions = !demoMode && query.trim() ? await resolveHgncSuggestions(query, genes) : [];
+    if (requestId !== latestRequestId) return;
+    target.innerHTML = suggestions.length ? renderSearchPageWithAliasSuggestions(genes, query, suggestions) : renderSearchPage(genes, query, result.dataMode ?? 'live');
+    bindGeneSearch();
+    return;
+  }
+  if (route.kind === 'proteins') {
+    const query = route.query.get('q')?.trim() ?? '';
+    let gene: import('./models/scientific').Gene | undefined;
+    let candidates: import('./models/scientific').Gene[] = [];
+    let failed = false;
+    const geneId = route.query.get('gene');
+    if (geneId) {
+      const result = await liveGeneService.getGene(geneId);
+      if (requestId !== latestRequestId) return;
+      if (result.status === 'ok') gene = result.data;
+      else { target.innerHTML = renderProteinExplorerPage(query, undefined, [], [], undefined, true); bindProteinSearch(); return; }
+    } else if (query) {
+      const search = await liveGeneService.search(query);
+      if (requestId !== latestRequestId) return;
+      failed = search.status !== 'ok';
+      const matches = search.data ?? [];
+      const exact = matches.filter((item) => item.symbol.toLocaleLowerCase() === query.toLocaleLowerCase() || item.id.toLocaleLowerCase() === query.toLocaleLowerCase() || item.externalIdentifiers.Ensembl?.toLocaleLowerCase() === query.toLocaleLowerCase());
+      candidates = exact.length ? exact : matches;
+      if (candidates.length === 1) {
+        const result = await liveGeneService.getGene(candidates[0]!.id);
+        if (requestId !== latestRequestId) return;
+        if (result.status === 'ok') gene = result.data;
+        else failed = true;
+      }
+    }
+    let proteins: import('./models/scientific').Protein[] = [];
+    if (gene) {
+      const result = await liveProteinService.getProteinsForGene(gene);
+      if (requestId !== latestRequestId) return;
+      proteins = result.data ?? [];
+      failed = result.status !== 'ok';
+    }
+    target.innerHTML = renderProteinExplorerPage(query, gene, gene ? [] : candidates, proteins, route.query.get('accession') ?? undefined, failed);
+    bindProteinSearch();
+    const selected = proteins.find((protein) => protein.accession === route.query.get('accession') || protein.id === route.query.get('accession'));
+    if (selected) bindProteinToLab(selected);
+    return;
+  }
   if (route.kind === 'variant-explorer') { const query = route.query.get('q')?.trim() ?? ''; const result = query ? await searchVariantKnowledge(query, { genome: route.query.get('genome') || undefined, variantType: route.query.get('variantType') || undefined }) : undefined; if (requestId !== latestRequestId) return; target.innerHTML = renderVariantKnowledgePage(result); bindVariantKnowledgeSearch((nextQuery, filters) => { const params = new URLSearchParams({ q: nextQuery }); Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); }); window.location.hash = `#/variant-explorer?${params.toString()}`; }); return; }
   if (route.kind === 'variant-assessment' && route.id) { const result = await getVariantKnowledge(route.id); if (requestId !== latestRequestId) return; const record = result.records[0]; if (!record) { target.innerHTML = renderVariantKnowledgePage(result); bindVariantKnowledgeSearch((query) => { window.location.hash = `#/variant-explorer?q=${encodeURIComponent(query)}`; }); return; } target.innerHTML = renderVariantAssessmentPage(record); bindVariantAssessment(record, () => render()); return; }
   if (route.kind === 'variants') { const geneId = route.query.get('gene'); const query = route.query.get('q')?.trim() ?? ''; if (geneId) { const result = await geneService.getGene(geneId); if (requestId !== latestRequestId) return; if (result.status !== 'ok' || !result.data) { target.innerHTML = renderError(result.errorCode, geneId); return; } await renderVariantGene(target, requestId, route, result.data, demoMode); return; } if (query) { const variantQuery = /^(VCV|SCV|rs|DEMO-VAR)/i.test(query); if (variantQuery) { const variant = await (demoMode ? demoVariantService : liveVariantService).getVariant(query); if (variant.status === 'ok' && variant.data) { const gene = await (demoMode ? demoGeneService : liveGeneService).getGene(variant.data.geneId); if (gene.status === 'ok' && gene.data) { await renderVariantGene(target, requestId, route, gene.data, demoMode, variant.data); return; } } } const search = await geneService.search(query); const candidate = search.data?.find((item) => item.symbol.toLocaleLowerCase() === query.toLocaleLowerCase() || item.id.toLocaleLowerCase() === query.toLocaleLowerCase()) ?? (search.data?.length === 1 ? search.data[0] : undefined); if (candidate) { const gene = await geneService.getGene(candidate.id); if (gene.status === 'ok' && gene.data) { await renderVariantGene(target, requestId, route, gene.data, demoMode); return; } } if (requestId !== latestRequestId) return; target.innerHTML = renderVariantExplorer(undefined, [], '', '', demoMode ? 'demo' : 'live', query, true); bindVariantSearch(); return; } target.innerHTML = renderVariantExplorer(undefined, [], '', '', demoMode ? 'demo' : 'live'); bindVariantSearch(); return; }
   if (route.kind === 'literature') { const query = route.query.get('q') ?? ''; const result = await liveLiteratureService.searchPublications(query); if (requestId !== latestRequestId) return; target.innerHTML = renderLiteraturePage(result.data ?? [], query); bindLiteratureSearch(result.data ?? []); return; }
-  if (route.kind === 'lab') { target.innerHTML = renderLabPage(); bindLab(); return; }
+  if (route.kind === 'lab') {
+    let sequence = pendingProteinSequence ?? '';
+    pendingProteinSequence = undefined;
+    const accession = route.query.get('protein');
+    const geneId = route.query.get('gene');
+    if (!sequence && accession && geneId) {
+      const geneResult = await liveGeneService.getGene(geneId);
+      if (requestId !== latestRequestId) return;
+      if (geneResult.status === 'ok' && geneResult.data) {
+        const proteinResult = await liveProteinService.getProteinsForGene(geneResult.data);
+        sequence = proteinResult.data?.find((protein) => protein.accession === accession)?.canonicalSequence ?? '';
+        if (sequence) sequence = `>protein:${accession}\n${sequence}`;
+      }
+    }
+    if (requestId !== latestRequestId) return;
+    target.innerHTML = renderLabPage();
+    const sequenceInput = target.querySelector<HTMLTextAreaElement>('#sequence-input');
+    if (sequenceInput) sequenceInput.value = sequence;
+    bindLab(undefined, sequence);
+    return;
+  }
   if (route.kind === 'saved') { target.innerHTML = renderWorkspaceSelectionWithNotes(getSavedItems(), getHistory()); bindCompareSelection(); bindWorkspaceNotes(); return; }
   if (route.kind === 'compare') { const savedGeneIds = getSavedItems().filter((item) => item.kind === 'gene').map((item) => item.id); const ids = route.query.get('ids')?.split(',').filter(Boolean) ?? savedGeneIds; const genes: import('./models/scientific').Gene[] = []; for (const id of ids) { if (requestId !== latestRequestId) return; const result = await getLiveGeneWithRetry(id); if (result.status === 'ok' && result.data) genes.push(result.data); } if (requestId !== latestRequestId) return; target.innerHTML = renderGeneComparisonPage(genes); return; }
   if (route.kind === 'notebook') { if (requestId !== latestRequestId) return; target.innerHTML = renderNotebookPage(getExperiments()); bindNotebook(); return; }
   if (route.kind === 'assistant') { const query = route.query.get('q') ?? ''; if (!query) { target.innerHTML = renderAssistantPage(); bindAssistant(); return; } const result = await liveGeneService.getGene(query); if (requestId !== latestRequestId) return; target.innerHTML = renderAssistantPage(result.data, query); bindAssistant(); return; }
   if (route.kind === 'about') { target.innerHTML = renderAboutPage(); return; }
   if (route.kind === 'sources') { target.innerHTML = renderSourcesPage(); return; }
-  if (route.kind === 'gene' && route.id) { const result = await geneService.getGene(route.id); if (requestId !== latestRequestId) return; if (result.status !== 'ok' || !result.data) { target.innerHTML = renderError(result.errorCode, route.id); return; } if (requestId !== latestRequestId) return; target.innerHTML = renderGeneDetails(result.data, result.dataMode ?? 'live'); addHistoryEntry({ kind: 'gene', id: result.data.id, label: result.data.symbol, href: window.location.hash }); bindWorkspaceAction('gene', result.data.id, result.data.symbol, result.data.name, result.data); return; }
+  if (route.kind === 'gene' && route.id) {
+    const result = await geneService.getGene(route.id);
+    if (requestId !== latestRequestId) return;
+    if (result.status !== 'ok' || !result.data) { target.innerHTML = renderError(result.errorCode, route.id); return; }
+    const nomenclatureResult = demoMode ? undefined : await hgncAdapter.getForGene(result.data);
+    if (requestId !== latestRequestId) return;
+    target.innerHTML = renderGeneDetailsWithNomenclature(result.data, result.dataMode ?? 'live', nomenclatureResult?.data);
+    bindGeneProteinLink(result.data);
+    addHistoryEntry({ kind: 'gene', id: result.data.id, label: result.data.symbol, href: window.location.hash });
+    bindWorkspaceAction('gene', result.data.id, result.data.symbol, result.data.name, result.data);
+    return;
+  }
   if (route.kind === 'variant' && route.id) { const variantServiceForRoute = demoMode ? demoVariantService : liveVariantService; const result = await getVariantWithGeneFallback(variantServiceForRoute, route.id, route.query.get('gene') ?? undefined); if (requestId !== latestRequestId) return; if (result.status !== 'ok' || !result.data) { target.innerHTML = renderError(result.errorCode, route.id); return; } const gene = demoMode ? await demoGeneService.getGene(result.data.geneId) : await liveGeneService.getGene(result.data.geneId); if (requestId !== latestRequestId) return; target.innerHTML = renderVariantDetails(result.data, gene.data, demoMode ? 'demo' : 'live'); addHistoryEntry({ kind: 'variant', id: result.data.id, label: result.data.id, href: window.location.hash }); bindWorkspaceAction('variant', result.data.id, result.data.id, result.data.consequence ?? result.data.variantType, result.data); }
 };
 

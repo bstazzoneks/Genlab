@@ -81,6 +81,26 @@ export interface Protein {
   sequenceId?: string;
   aminoAcidLength?: number;
   functionDescription?: string;
+  accession?: string;
+  entryName?: string;
+  massDaltons?: number;
+  canonicalSequence?: string;
+  isoforms?: Array<{ id: string; name?: string }>;
+  subcellularLocation?: string[];
+  features?: Array<{ type: string; start: number; end: number; description?: string }>;
+  crossReferences?: Array<{ database: string; identifier: string; url?: string }>;
+  goAnnotations?: Array<{
+    id: string;
+    term: string;
+    aspect: 'molecular-function' | 'biological-process' | 'cellular-component';
+    evidenceCode: string;
+    evidenceSource: 'manually-curated' | 'inferred-electronically' | 'other-inference' | 'not-reported';
+    database: 'UniProt' | 'QuickGO';
+    category: 'curated-database' | 'reference-database';
+    retrievedAt: string;
+    limitations: string[];
+    url: string;
+  }>;
   sources: ScientificSource[];
 }
 

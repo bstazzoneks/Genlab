@@ -33,6 +33,19 @@ Variant records intentionally live outside Gene Details. A gene page links to `#
 
 The XML parser is browser-side because the deployment is static. If XML parsing fails or the full endpoint is temporarily unavailable, the already validated NCBI summary remains visible and unavailable fields stay unavailable; no other gene is substituted.
 
+## Protein and nomenclature
+
+`liveProteinService` uses the UniProt REST adapter for reviewed human entries and
+requires an exact stable gene cross-reference (NCBI Gene ID or Ensembl ID) when
+one is available; symbol-only lookup is checked against UniProt's primary gene
+symbol. Every matching protein candidate remains selectable. HGNC REST supplies
+approved nomenclature and a separate prior/alias-symbol suggestion without
+replacing NCBI search results. QuickGO annotations are kept as individual records
+alongside UniProt GO cross-references, with their original evidence codes and
+source labels. A QuickGO failure leaves the UniProt protein intact and is exposed
+in its source limitations. UniProt, HGNC and QuickGO REST endpoints were checked
+for browser CORS headers; the static client does not proxy provider requests.
+
 ## Routing and deployment
 
 Hash routing (`#/genes`) works with direct navigation on GitHub Pages without server rewrites. Vite uses a relative base (`./`) so the same build can be served from a repository subpath. The deployment workflow can later publish `dist/` using GitHub Actions.
