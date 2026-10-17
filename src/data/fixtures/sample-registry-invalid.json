@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "issuedIds": ["SMP-VALID"],
+  "samples": [
+    {
+      "internalId": "SMP-VALID",
+      "organism": "Mus musculus",
+      "sampleType": "tissue",
+      "storage": {},
+      "status": "active",
+      "humanDerived": false,
+      "customFields": [],
+      "history": [{ "id": "history-1", "timestamp": "2026-01-01T00:00:00.000Z", "action": "created", "note": "fixture" }],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "internalId": "SMP-INVALID",
+      "organism": "Mus musculus",
+      "sampleType": "invalid",
+      "storage": {},
+      "status": "active",
+      "humanDerived": false,
+      "customFields": [],
+      "history": [],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}

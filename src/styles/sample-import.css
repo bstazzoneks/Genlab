@@ -29,6 +29,9 @@
 .import-metadata, .import-summary, .import-provenance { margin: 1rem 0; }
 .import-provenance code { overflow-wrap: anywhere; }
 .import-summary .metadata { max-width: 100%; }
+.import-parameters { margin-top: .75rem; }
+.import-parameters summary { color: var(--muted); cursor: pointer; font-family: 'DM Mono', monospace; font-size: .72rem; }
+.import-parameters .metadata { margin-top: .65rem; }
 .vcf-table-section { margin-top: 1.5rem; }
 .vcf-filters { display: grid; gap: .6rem; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: .9rem 0; }
 .vcf-filters label { color: var(--muted); display: grid; font-family: 'DM Mono', monospace; font-size: .66rem; gap: .35rem; }

@@ -643,12 +643,14 @@ const bindFileImportPage = (_samples: Sample[]): void => {
     const mapping: QpcrColumnMapping = { sample: optional('sample') ?? '', target: optional('target') ?? '', ct: optional('ct') ?? '', well: optional('well'), replicate: optional('replicate'), plate: optional('plate') };
     const referenceGene = optional('referenceGene');
     const controlSample = optional('controlSample');
+    const rawThreshold = values.get('threshold')?.toString();
+    const threshold = rawThreshold === undefined || rawThreshold === '' ? 0.5 : Number(rawThreshold);
     const worker = ensureFileImportWorker();
     const id = ++fileImportRequestId;
     activeFileImportRequestId = id;
     currentFileProgress = { bytesRead: 0, totalBytes: 0, stage: 'parsing' };
     renderImportsRoute();
-    worker.postMessage({ kind: 'analyze-qpcr', id, table: currentFileImportResult, mapping, threshold: Number(values.get('threshold')) || 0.5, referenceGene, controlSample });
+    worker.postMessage({ kind: 'analyze-qpcr', id, table: currentFileImportResult, mapping, threshold, referenceGene, controlSample });
   });
   document.querySelector<HTMLFormElement>('#vcf-filters')?.addEventListener('submit', (event) => {
     event.preventDefault();

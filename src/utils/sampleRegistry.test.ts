@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import duplicateRegistryFixture from '../data/fixtures/sample-registry-duplicate.json';
+import invalidRegistryFixture from '../data/fixtures/sample-registry-invalid.json';
 import type { Sample } from '../models/sample';
 import { createSample, exportSampleRegistryCsv, exportSampleRegistryJson, getSampleRegistry, linkAnalysisToSample, MAX_SAMPLE_CUSTOM_FIELDS, MAX_SAMPLE_REGISTRY_BYTES, mergeSampleRegistryImport, previewSampleRegistryImport, SampleRegistryError, updateSample } from './sampleRegistry';
 
@@ -52,6 +53,12 @@ describe('local sample registry', () => {
     expect(mergeSampleRegistryImport(preview).map((sample) => sample.internalId)).toEqual(['SMP-NEW']);
     expect(getSampleRegistry().samples.find((sample) => sample.internalId === 'SMP-EXISTING')?.history).toEqual(current.history);
     expect(getSampleRegistry().issuedIds).toContain('SMP-NEW');
+  });
+
+  it('previews valid records while reporting invalid rows for review', () => {
+    const preview = previewSampleRegistryImport(JSON.stringify(invalidRegistryFixture));
+    expect(preview.incomingSamples.map((sample) => sample.internalId)).toEqual(['SMP-VALID']);
+    expect(preview.invalidSamples).toEqual([{ index: 1, reason: 'invalid-sample' }]);
   });
 
   it('round-trips a schema-versioned CSV including custom data and history', () => {

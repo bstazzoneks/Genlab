@@ -300,16 +300,17 @@ export class VcfAccumulator {
 
   finish(): VcfStatistics {
     if (!this.sawColumnHeader) throw new FileParseError(Math.max(1, this.lineNumber), 'vcf-missing-column-header');
+    const assembly = this.header.assembly ?? this.header.contigs.find((contig) => contig.fields.assembly)?.fields.assembly;
     return {
       ...this.header,
-      assembly: this.header.assembly ?? this.header.contigs.find((contig) => contig.fields.assembly)?.fields.assembly,
+      ...(assembly ? { assembly } : {}),
       variants: this.variants,
       variantCounts: this.variantCounts,
       filterCounts: this.filterCounts,
       transitions: this.transitions,
       transversions: this.transversions,
       tsTvRatio: this.transversions ? this.transitions / this.transversions : undefined,
-      assemblyDeclared: Boolean(this.header.assembly || this.header.contigs.some((contig) => contig.fields.assembly)),
+      assemblyDeclared: Boolean(assembly),
       series: [
         ...Object.entries(this.variantCounts).map(([label, value]) => ({ label: `ALT alleles: ${label}`, unit: 'ALT alleles', categories: [label], values: [value] })),
         ...Object.entries(this.filterCounts).map(([label, value]) => ({ label: `FILTER ${label}`, unit: 'records', categories: [label], values: [value] })),

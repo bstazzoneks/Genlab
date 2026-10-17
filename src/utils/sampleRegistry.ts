@@ -47,7 +47,7 @@ export const getSampleRegistry = (): SampleRegistry => {
     const stored = localStorage.getItem(storageKey);
     if (!stored) return emptyRegistry();
     const parsed: unknown = JSON.parse(stored);
-    if (!isObject(parsed) || parsed.schemaVersion !== SAMPLE_REGISTRY_SCHEMA_VERSION || !Array.isArray(parsed.samples) || !Array.isArray(parsed.issuedIds)) throw new SampleRegistryError('corrupt');
+    if (!isObject(parsed) || parsed.schemaVersion !== SAMPLE_REGISTRY_SCHEMA_VERSION || !Array.isArray(parsed.samples) || !Array.isArray(parsed.issuedIds) || !parsed.issuedIds.every((id) => typeof id === 'string')) throw new SampleRegistryError('corrupt');
     if (!parsed.samples.every(isSample) || !parsed.issuedIds.every((id) => typeof id === 'string')) throw new SampleRegistryError('corrupt');
     return clone(parsed as unknown as SampleRegistry);
   } catch (error) {
@@ -162,16 +162,21 @@ export const previewSampleRegistryImport = (input: string, format: 'json' | 'csv
       customFields: parseJsonCell(cell(row, 'customFields'), []), history: parseJsonCell(cell(row, 'history'), []),
       createdAt: cell(row, 'createdAt') ?? '', updatedAt: cell(row, 'updatedAt') ?? '',
     }));
-    imported = { schemaVersion: SAMPLE_REGISTRY_SCHEMA_VERSION, samples, issuedIds: parseJsonCell(cell(meta, 'issuedIds'), []) };
+    const issuedIds: unknown = parseJsonCell(cell(meta, 'issuedIds'), []);
+    if (!Array.isArray(issuedIds) || !issuedIds.every((id) => typeof id === 'string')) throw new SampleRegistryError('corrupt');
+    imported = { schemaVersion: SAMPLE_REGISTRY_SCHEMA_VERSION, samples, issuedIds };
   }
   const invalidSamples: SampleRegistryImportPreview['invalidSamples'] = [];
-  imported.samples.forEach((sample, index) => { if (!isSample(sample)) invalidSamples.push({ index, reason: 'invalid-sample' }); });
-  if (invalidSamples.length) throw new SampleRegistryError('invalid-sample');
+  const validSamples: Sample[] = [];
+  imported.samples.forEach((sample, index) => {
+    if (!isSample(sample)) invalidSamples.push({ index, reason: 'invalid-sample' });
+    else validSamples.push(sample);
+  });
   const current = getSampleRegistry();
   const occupied = new Set([...current.issuedIds, ...current.samples.map((sample) => sample.internalId)].map((id) => id.toLocaleLowerCase()));
   const seen = new Set<string>();
   const duplicateIds: string[] = [];
-  const incomingSamples = imported.samples.filter((sample) => {
+  const incomingSamples = validSamples.filter((sample) => {
     const id = sample.internalId.toLocaleLowerCase();
     if (occupied.has(id) || seen.has(id)) { duplicateIds.push(sample.internalId); return false; }
     seen.add(id);
