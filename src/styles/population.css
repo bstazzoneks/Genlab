@@ -1,0 +1,9 @@
+.population-panel { display: grid; gap: 1rem; margin-top: 1.5rem; }
+.population-form { display: grid; gap: .65rem; max-width: 680px; }
+.population-form label { color: var(--muted); font-family: 'DM Mono', monospace; font-size: .72rem; }
+.population-form input { background: var(--paper); border: 1px solid var(--line); border-radius: 4px; color: var(--ink); min-width: 0; padding: .75rem .85rem; }
+.population-form .action-button { justify-self: start; }
+.population-results { display: grid; gap: 1rem; min-width: 0; }
+.merged-rsids { border-left: 3px solid var(--warm); padding-left: .8rem; }
+.merged-rsids ul { margin-bottom: 0; }
+.population-results .table-wrap { max-width: 100%; }

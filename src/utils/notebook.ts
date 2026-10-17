@@ -1,4 +1,5 @@
 import type { SequenceAnalysis, SequenceComparison } from './sequence';
+import type { SampleCustomField } from '../models/sample';
 
 export interface ExperimentRecord {
   id: string;
@@ -13,6 +14,8 @@ export interface ExperimentRecord {
   tags: string[];
   references: NotebookReference[];
   dataPoints: NotebookDataPoint[];
+  sampleIds?: string[];
+  customFields?: SampleCustomField[];
 }
 
 export interface NotebookDataPoint {
@@ -46,13 +49,13 @@ const readExperiments = (): ExperimentRecord[] => {
 };
 
 const writeExperiments = (experiments: ExperimentRecord[]): void => localStorage.setItem(storageKey, JSON.stringify(experiments));
-const normalizeExperiment = (experiment: ExperimentRecord): ExperimentRecord => ({ ...experiment, tags: experiment.tags ?? [], references: experiment.references ?? [], dataPoints: experiment.dataPoints ?? [] });
+const normalizeExperiment = (experiment: ExperimentRecord): ExperimentRecord => ({ ...experiment, tags: experiment.tags ?? [], references: experiment.references ?? [], dataPoints: experiment.dataPoints ?? [], sampleIds: experiment.sampleIds ?? [], customFields: experiment.customFields ?? [] });
 
 export const getExperiments = (): ExperimentRecord[] => readExperiments().sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 
 export const saveExperiment = (experiment: Omit<ExperimentRecord, 'id' | 'createdAt' | 'updatedAt'>): ExperimentRecord => {
   const now = new Date().toISOString();
-  const record: ExperimentRecord = { ...experiment, references: experiment.references ?? [], dataPoints: (experiment.dataPoints ?? []).slice(0, 20), id: `EXP-${Date.now().toString(36).toUpperCase()}`, createdAt: now, updatedAt: now };
+  const record: ExperimentRecord = { ...experiment, references: experiment.references ?? [], dataPoints: (experiment.dataPoints ?? []).slice(0, 20), sampleIds: experiment.sampleIds ?? [], customFields: (experiment.customFields ?? []).slice(0, 20), id: `EXP-${Date.now().toString(36).toUpperCase()}`, createdAt: now, updatedAt: now };
   writeExperiments([record, ...readExperiments()]);
   return record;
 };

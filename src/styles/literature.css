@@ -1,0 +1,12 @@
+.literature-filters { display: grid; gap: .65rem; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 1rem; max-width: 980px; }
+.literature-filters label { align-self: end; color: var(--muted); font-family: 'DM Mono', monospace; font-size: .68rem; }
+.literature-filters input:not([type='checkbox']), .literature-filters select { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; color: var(--ink); min-width: 0; padding: .65rem .7rem; }
+.literature-filters .filter-check { align-items: center; display: flex; gap: .5rem; min-height: 2.5rem; }
+.literature-filters input[type='checkbox'] { accent-color: var(--accent); }
+.literature-filters button { background: var(--accent); border: 0; border-radius: 4px; color: #fff; cursor: pointer; font-weight: 700; justify-self: start; padding: .65rem 1rem; }
+.publication-sources, .publication-links { display: flex; flex-wrap: wrap; gap: .6rem; }
+.publication-source-record { display: grid; gap: .2rem; min-width: 0; }
+.publication-source-record small { color: var(--muted); max-width: 42rem; overflow-wrap: anywhere; }
+.publication-links { align-items: flex-start; flex-direction: column; }
+@media (max-width: 700px) { .literature-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 420px) { .literature-filters { grid-template-columns: 1fr; } }

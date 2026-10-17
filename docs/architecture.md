@@ -33,6 +33,53 @@ Variant records intentionally live outside Gene Details. A gene page links to `#
 
 The XML parser is browser-side because the deployment is static. If XML parsing fails or the full endpoint is temporarily unavailable, the already validated NCBI summary remains visible and unavailable fields stay unavailable; no other gene is substituted.
 
+## Population variation and literature
+
+`livePopulationService` uses Ensembl Variation's rsID endpoint and preserves each
+population/allele frequency as a separate typed row, including the reported study,
+assembly and source provenance. It does not calculate a global frequency or
+sample size. `liveDbSnpService` normalizes NCBI Variation placements and merge
+IDs, but the current stable endpoint responds without `Access-Control-Allow-Origin`
+and its beta route returns 404. The static browser therefore marks dbSNP
+unavailable and links to the official record rather than proxying it or silently
+redirecting merged IDs. Population data is requested only after an explicit rsID
+submit; user sequence input is never used to infer coordinates.
+
+`liveLiteratureService` keeps PubMed as the default and adds Europe PMC or both.
+Europe PMC OA, citation, publication-type and preprint fields remain source
+metadata; full-text URLs are exposed only when Europe PMC marks the record open
+access. Dual-source results deduplicate on reported PMID or DOI and retain both
+source records. Filters do not classify records when the source omits that field.
+Europe PMC and Ensembl Variation REST endpoints were checked for browser CORS;
+the NCBI Variation response currently has no browser CORS header.
+The dbSNP adapter uses NCBI E-utilities `esummary` (`db=snp`) directly instead:
+that official endpoint exposes CORS, needs no proxy, and returns SPDI accessions
+and positions. Assembly names are shown only when provided by the response; a
+different returned rsID is surfaced as the requested ID rather than hidden.
+
+## Sample registry and local file analysis
+
+The version-1 sample registry uses the existing browser `localStorage` mechanism
+under a separate key; its serialized registry is capped at 2 MiB. Browser quota
+is implementation-dependent, and the existing notebook retains its normal
+browser quota. Sample history is append-only; imports preview schema and duplicate
+IDs and only merge new IDs. Exported JSON/CSV includes schema version and history.
+No donor identifiers should be entered; human-derived samples display a stronger
+reminder.
+
+FASTQ, VCF, CSV/TSV, and gzip text are read in `sequence.worker.ts`, reusing the
+existing worker rather than uploading files. FASTQ/VCF default to 200 MB and
+CSV/TSV to 10 MB; configured limits also apply to decompressed bytes. SHA-256 is
+computed locally with Web Crypto. FASTQ quality scores remain undetermined when
+the encoding is ambiguous, and per-position statistics use at most 10,000 reads.
+VCF assembly is shown only when declared; genotypes and INFO values are retained
+as written, while counts and Ts/Tv are explicitly computed from that file. VCF
+IDs may link to existing identifier-based lookups, never coordinate matching.
+qPCR columns are user-mapped; Undetermined Ct values stay missing, and ΔCt/ΔΔCt
+run only after explicit reference/control selection. All outputs expose typed
+numeric series with labels/units for later charting; no charts are generated here.
+These file results are user data plus local computation, not database assertions.
+
 ## Protein and nomenclature
 
 `liveProteinService` uses the UniProt REST adapter for reviewed human entries and

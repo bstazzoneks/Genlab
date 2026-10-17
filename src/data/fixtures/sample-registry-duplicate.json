@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "issuedIds": ["SMP-EXISTING", "SMP-NEW"],
+  "samples": [
+    {
+      "internalId": "SMP-EXISTING",
+      "organism": "Homo sapiens",
+      "taxonomyId": "9606",
+      "sampleType": "dna-extract",
+      "storage": {},
+      "status": "active",
+      "humanDerived": true,
+      "customFields": [],
+      "history": [{ "id": "history-1", "timestamp": "2026-01-01T00:00:00.000Z", "action": "created", "note": "fixture" }],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "internalId": "SMP-NEW",
+      "organism": "Mus musculus",
+      "taxonomyId": "10090",
+      "sampleType": "tissue",
+      "storage": {},
+      "status": "active",
+      "humanDerived": false,
+      "customFields": [],
+      "history": [{ "id": "history-2", "timestamp": "2026-01-01T00:00:00.000Z", "action": "created", "note": "fixture" }],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}

@@ -1,12 +1,21 @@
 import './styles/main.css';
 import './styles/protein.css';
+import './styles/population.css';
+import './styles/literature.css';
+import './styles/sample-import.css';
 import { getLocale, setLocale, t } from './i18n';
-import { renderGeneDetailsWithNomenclature, renderProteinExplorerPage, renderSearchPage, renderSearchPageWithAliasSuggestions, renderVariantDetails, renderVariantExplorer } from './components/explorer';
+import { renderGeneDetailsWithNomenclature, renderProteinExplorerPage, renderSearchPage, renderSearchPageWithAliasSuggestions, renderVariantExplorer } from './components/explorer';
+import { renderPopulationLoading, renderPopulationResults, renderVariantDetailsWithPopulation } from './components/population';
+import { renderSampleRegistryPage } from './components/samples';
+import { renderFileImportPageWithProgressIds, renderVcfPageRows, renderVcfTableHead } from './components/fileImport';
+import { bindCustomFieldsEditor, readCustomFields } from './components/customFields';
 import { bindVariantAssessment, bindVariantKnowledgeSearch, renderVariantAssessmentPage, renderVariantKnowledgePage } from './components/variantKnowledge';
-import { renderAboutPage, renderAssistantPage, renderGeneComparisonPage, renderGeneIdentificationResults, renderLabGeneContext, renderLabLoadingPage, renderLabPage, renderLabVcfConditions, renderLiteraturePage, renderNotebookPage, renderSourcesPage, renderWorkspaceSelectionWithNotes } from './components/sitePages';
+import { renderAboutPage, renderAssistantPage, renderGeneComparisonPage, renderGeneIdentificationResults, renderLabGeneContext, renderLabLoadingPage, renderLabPage, renderLabVcfConditions, renderLiteraturePage, renderNotebookPageWithSamples, renderSourcesPage, renderWorkspaceSelectionWithNotes } from './components/sitePages';
 import { demoGeneService, demoVariantService, applyVariantFilters } from './services/demo';
 import { liveGeneService } from './services/live';
 import { liveVariantService } from './services/liveVariants';
+import { liveDbSnpService } from './services/liveDbSnp';
+import { livePopulationService } from './services/livePopulation';
 import { liveProteinService } from './services/liveProteins';
 import { createHgncAdapter } from './services/adapters/hgncAdapter';
 import { liveLiteratureService } from './services/liveLiterature';
@@ -18,8 +27,11 @@ import { getVariantKnowledge, searchVariantKnowledge } from './services/variantK
 import type { GeneIdentificationResult } from './models/geneIdentification';
 import { annotateVariantWithProvider, clearVariantAnnotationCache, createClinVarIdentifierAdapter, filterDetectedVariants, getVariantComparisonKey, type DetectedVariantFilters } from './services/variantAnnotation';
 import { serializeGeneIdentificationCsv } from './utils/variantExport';
+import { createSample, exportSampleRegistryCsv, exportSampleRegistryJson, getSampleRegistry, linkAnalysisToSample, mergeSampleRegistryImport, previewSampleRegistryImport, SampleRegistryError, suggestSampleId, updateSample } from './utils/sampleRegistry';
+import type { Sample, SampleRegistryImportPreview, SampleStatus, SampleType } from './models/sample';
+import type { FileImportResult, QpcrColumnMapping } from './models/fileImport';
 
-type Route = { kind: 'home' | 'genes' | 'gene' | 'proteins' | 'variants' | 'variant' | 'variant-explorer' | 'variant-assessment' | 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'saved' | 'compare' | 'notebook' | 'planned'; id?: string; query: URLSearchParams };
+type Route = { kind: 'home' | 'genes' | 'gene' | 'proteins' | 'samples' | 'imports' | 'variants' | 'variant' | 'variant-explorer' | 'variant-assessment' | 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'saved' | 'compare' | 'notebook' | 'planned'; id?: string; sub?: string; query: URLSearchParams };
 const clearLegacyAccountStorage = (): void => { try { ['genelab-local-accounts', 'genelab-local-session', 'genelab-cloud-token', 'genelab-cloud-account'].forEach((key) => localStorage.removeItem(key)); } catch { /* Storage may be unavailable in restricted browser contexts. */ } };
 clearLegacyAccountStorage();
 type PlannedRoute = 'literature' | 'lab' | 'assistant' | 'about' | 'sources' | 'variants';
@@ -28,7 +40,7 @@ const plannedRoutes: Record<PlannedRoute, string> = { literature: 'literature', 
 const hgncAdapter = createHgncAdapter();
 const navItems: Array<{ route: string; key: Parameters<typeof t>[0] }> = [
   { route: '', key: 'nav.home' }, { route: 'genes', key: 'nav.genes' }, { route: 'proteins', key: 'nav.proteins' }, { route: 'variants', key: 'nav.variants' }, { route: 'variant-explorer', key: 'nav.variantExplorer' },
-  { route: 'literature', key: 'nav.literature' }, { route: 'lab', key: 'nav.lab' }, { route: 'assistant', key: 'nav.assistant' }, { route: 'saved', key: 'nav.saved' }, { route: 'notebook', key: 'nav.notebook' },
+  { route: 'literature', key: 'nav.literature' }, { route: 'lab', key: 'nav.lab' }, { route: 'imports', key: 'nav.imports' }, { route: 'samples', key: 'nav.samples' }, { route: 'assistant', key: 'nav.assistant' }, { route: 'saved', key: 'nav.saved' }, { route: 'notebook', key: 'nav.notebook' },
   { route: 'about', key: 'nav.about' }, { route: 'sources', key: 'nav.sources' },
 ];
 
@@ -41,6 +53,8 @@ const parseRoute = (): Route => {
   if (segments[0] === 'genes') return { kind: 'genes', query };
   if (segments[0] === 'gene' && segments[1]) return { kind: 'gene', id: decodeURIComponent(segments[1]), query };
   if (segments[0] === 'proteins') return { kind: 'proteins', query };
+  if (segments[0] === 'samples') return { kind: 'samples', id: segments[1] && segments[1] !== 'new' ? decodeURIComponent(segments[1]) : segments[1], sub: segments[2], query };
+  if (segments[0] === 'imports') return { kind: 'imports', query };
   if (segments[0] === 'variants') return { kind: 'variants', query };
   if (segments[0] === 'variant' && segments[1]) return { kind: 'variant', id: decodeURIComponent(segments[1]), query };
   if (segments[0] === 'variant-explorer') return { kind: 'variant-explorer', query };
@@ -88,9 +102,63 @@ const bindGeneProteinLink = (gene: import('./models/scientific').Gene): void => 
   link.textContent = t('protein.viewProtein');
   actions.append(link);
 };
+const bindGeneLiteratureLink = (gene: import('./models/scientific').Gene): void => {
+  const actions = document.querySelector<HTMLElement>('.record-actions');
+  if (!actions) return;
+  const link = document.createElement('a');
+  link.className = 'action-link';
+  link.href = `#/literature?${new URLSearchParams({ q: gene.symbol, source: 'pubmed' }).toString()}`;
+  link.textContent = t('literature.related');
+  actions.append(link);
+};
 const bindVariantFilters = (geneId: string): void => document.querySelector<HTMLFormElement>('#variant-filters')?.addEventListener('submit', (event) => { event.preventDefault(); const data = new FormData(event.currentTarget as HTMLFormElement); const type = data.get('type')?.toString() ?? ''; const consequence = data.get('consequence')?.toString() ?? ''; const significance = data.get('significance')?.toString() ?? ''; const transcript = data.get('transcript')?.toString() ?? ''; window.location.hash = `#/variants?gene=${encodeURIComponent(geneId)}&type=${encodeURIComponent(type)}&consequence=${encodeURIComponent(consequence)}&significance=${encodeURIComponent(significance)}&transcript=${encodeURIComponent(transcript)}`; });
 const bindVariantSearch = (): void => { const form = document.querySelector<HTMLFormElement>('#variant-search-form'); const input = document.querySelector<HTMLInputElement>('#variant-query'); if (!form || !input) return; form.addEventListener('submit', (event) => { event.preventDefault(); const query = input.value.trim(); if (query) window.location.hash = `#/variants?q=${encodeURIComponent(query)}`; }); };
-const bindLiteratureSearch = (publications: import('./models/scientific').Publication[] = []): void => { document.querySelector<HTMLFormElement>('#literature-search-form')?.addEventListener('submit', (event) => { event.preventDefault(); const query = new FormData(event.currentTarget as HTMLFormElement).get('query')?.toString() ?? ''; window.location.hash = `#/literature?q=${encodeURIComponent(query)}`; }); document.querySelector<HTMLButtonElement>('#export-literature')?.addEventListener('click', () => downloadJson('genelab-bibliography.json', publications.map((publication) => ({ title: publication.title, authors: publication.authors, journal: publication.journal, year: publication.year, identifiers: publication.identifiers, url: publication.url })))); };
+const bindVariantPopulationLookup = (): void => {
+  const form = document.querySelector<HTMLFormElement>('#population-lookup-form');
+  const input = document.querySelector<HTMLInputElement>('#population-rsid');
+  const result = document.querySelector<HTMLElement>('#population-results');
+  if (!form || !input || !result) return;
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const rsId = input.value.trim().toLocaleLowerCase();
+    if (!/^rs\d+$/.test(rsId)) { input.setCustomValidity(t('population.invalidRsId')); input.reportValidity(); return; }
+    input.setCustomValidity('');
+    const requestId = latestRequestId;
+    const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (button) button.disabled = true;
+    result.innerHTML = renderPopulationLoading();
+    const [dbSnp, frequencies] = await Promise.all([
+      liveDbSnpService.getVariant(rsId),
+      livePopulationService.getPopulationFrequencies(rsId),
+    ]);
+    if (requestId !== latestRequestId) return;
+    result.innerHTML = renderPopulationResults(rsId, dbSnp, frequencies);
+    if (button) button.disabled = false;
+  });
+};
+const bindLiteratureSearch = (publications: import('./models/scientific').Publication[] = []): void => {
+  document.querySelector<HTMLFormElement>('#literature-search-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const values = new FormData(form);
+    const params = new URLSearchParams();
+    const query = values.get('query')?.toString().trim() ?? '';
+    const source = values.get('source')?.toString() ?? 'pubmed';
+    const yearFrom = values.get('yearFrom')?.toString() ?? '';
+    const yearTo = values.get('yearTo')?.toString() ?? '';
+    const articleType = values.get('articleType')?.toString() ?? 'any';
+    const preprints = values.get('preprints')?.toString() ?? 'include';
+    if (query) params.set('q', query);
+    params.set('source', source);
+    if (yearFrom) params.set('yearFrom', yearFrom);
+    if (yearTo) params.set('yearTo', yearTo);
+    if (values.get('openAccessOnly')) params.set('openAccessOnly', '1');
+    if (articleType !== 'any') params.set('articleType', articleType);
+    if (preprints !== 'include') params.set('preprints', preprints);
+    window.location.hash = `#/literature?${params.toString()}`;
+  });
+  document.querySelector<HTMLButtonElement>('#export-literature')?.addEventListener('click', () => downloadJson('genelab-bibliography.json', publications.map((publication) => ({ title: publication.title, authors: publication.authors, journal: publication.journal, year: publication.year, identifiers: publication.identifiers, url: publication.url, sources: publication.sources ?? [publication.source], isOpenAccess: publication.isOpenAccess, citationCount: publication.citationCount, fullTextUrl: publication.fullTextUrl, isPreprint: publication.isPreprint, publicationTypes: publication.publicationTypes }))));
+};
 const downloadJson = (filename: string, value: unknown): void => { const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); };
 const downloadIdentificationCsv = (result: GeneIdentificationResult): void => {
   const blob = new Blob([serializeGeneIdentificationCsv(result)], { type: 'text/csv;charset=utf-8' });
@@ -295,7 +363,7 @@ const bindAssistant = (): void => document.querySelector<HTMLFormElement>('#assi
 const bindWorkspaceAction = (kind: SavedItemKind, id: string, label: string, subtitle: string, exportData?: unknown): void => { const host = document.querySelector<HTMLElement>('.record-actions') ?? document.querySelector<HTMLElement>('.record-heading'); if (!host) return; const button = document.createElement('button'); button.className = 'action-button'; button.type = 'button'; const update = (): void => { button.textContent = isSaved(kind, id) ? t('workspace.saved') : t('workspace.save'); }; update(); button.addEventListener('click', () => { toggleSaved({ kind, id, label, subtitle }); update(); }); host.append(button); if (exportData) { const exportButton = document.createElement('button'); exportButton.className = 'action-button'; exportButton.type = 'button'; exportButton.textContent = t('workspace.export'); exportButton.addEventListener('click', () => downloadJson(`genelab-${kind}-${id}.json`, exportData)); host.append(exportButton); const notebookButton = document.createElement('button'); notebookButton.className = 'action-button'; notebookButton.type = 'button'; notebookButton.textContent = t('notebook.addReference'); notebookButton.addEventListener('click', () => { saveExperiment({ title: `${t(`workspace.${kind}`)}: ${label}`, notes: '', tags: [], references: [{ kind, id, label, data: exportData as NotebookReference['data'] }], dataPoints: [] }); notebookButton.textContent = t('notebook.saved'); }); host.append(notebookButton); } };
 const bindCompareSelection = (): void => document.querySelector<HTMLFormElement>('#compare-selection-form')?.addEventListener('submit', (event) => { event.preventDefault(); const ids = new FormData(event.currentTarget as HTMLFormElement).getAll('gene').map((value) => value.toString()); if (ids.length < 4) { window.alert(t('workspace.compareMinimum')); return; } window.location.hash = `#/compare?ids=${encodeURIComponent(ids.join(','))}`; });
 const bindWorkspaceNotes = (): void => document.querySelectorAll<HTMLButtonElement>('.save-note').forEach((button) => button.addEventListener('click', () => { const kind = button.dataset.noteKind as SavedItemKind; const id = button.dataset.noteId ?? ''; const note = document.querySelector<HTMLTextAreaElement>(`[data-note-kind="${kind}"][data-note-id="${id}"]`); if (!note) return; setNote(kind, id, note.value); button.textContent = t('workspace.noteSaved'); }));
-const bindNotebook = (): void => { document.querySelector<HTMLFormElement>('#notebook-entry-form')?.addEventListener('submit', (event) => { event.preventDefault(); const values = new FormData(event.currentTarget as HTMLFormElement); const references: NotebookReference[] = (values.get('references')?.toString() ?? '').split('\n').map((line) => line.trim()).filter(Boolean).map((line) => { const [kindValue, idValue, ...labelParts] = line.split('|'); const kind = ['gene', 'variant', 'publication', 'analysis'].includes(kindValue) ? kindValue as NotebookReference['kind'] : 'analysis'; return { kind, id: idValue || labelParts.join('|'), label: labelParts.join('|') || idValue || line }; }); const dataPoints: NotebookDataPoint[] = (values.get('dataPoints')?.toString() ?? '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 20).map((line, index) => { const separator = line.indexOf('|'); return separator >= 0 ? { label: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() } : { label: `${t('notebook.data')} ${index + 1}`, value: line }; }); saveExperiment({ title: values.get('title')?.toString().trim() || t('notebook.defaultTitle'), notes: values.get('notes')?.toString() ?? '', tags: [], references, dataPoints }); render(); }); document.querySelectorAll<HTMLButtonElement>('.delete-experiment').forEach((button) => button.addEventListener('click', async () => { const id = button.dataset.experimentId; if (id && window.confirm(t('notebook.confirmDelete'))) { deleteExperiment(id); render(); } })); document.querySelectorAll<HTMLButtonElement>('.export-experiment').forEach((button) => button.addEventListener('click', () => { const id = button.dataset.experimentId; const experiment = getExperiments().find((item) => item.id === id); if (experiment) downloadJson(`genelab-${experiment.id}.json`, experiment); })); };
+const bindNotebook = (): void => { bindCustomFieldsEditor(); document.querySelector<HTMLFormElement>('#notebook-entry-form')?.addEventListener('submit', (event) => { event.preventDefault(); const values = new FormData(event.currentTarget as HTMLFormElement); const references: NotebookReference[] = (values.get('references')?.toString() ?? '').split('\n').map((line) => line.trim()).filter(Boolean).map((line) => { const [kindValue, idValue, ...labelParts] = line.split('|'); const kind = ['gene', 'variant', 'publication', 'analysis'].includes(kindValue) ? kindValue as NotebookReference['kind'] : 'analysis'; return { kind, id: idValue || labelParts.join('|'), label: labelParts.join('|') || idValue || line }; }); const dataPoints: NotebookDataPoint[] = (values.get('dataPoints')?.toString() ?? '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 20).map((line, index) => { const separator = line.indexOf('|'); return separator >= 0 ? { label: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() } : { label: `${t('notebook.data')} ${index + 1}`, value: line }; }); saveExperiment({ title: values.get('title')?.toString().trim() || t('notebook.defaultTitle'), notes: values.get('notes')?.toString() ?? '', tags: [], references, dataPoints, sampleIds: values.getAll('sampleIds').map((value) => value.toString()), customFields: readCustomFields(values) }); render(); }); document.querySelectorAll<HTMLButtonElement>('.delete-experiment').forEach((button) => button.addEventListener('click', async () => { const id = button.dataset.experimentId; if (id && window.confirm(t('notebook.confirmDelete'))) { deleteExperiment(id); render(); } })); document.querySelectorAll<HTMLButtonElement>('.export-experiment').forEach((button) => button.addEventListener('click', () => { const id = button.dataset.experimentId; const experiment = getExperiments().find((item) => item.id === id); if (experiment) downloadJson(`genelab-${experiment.id}.json`, experiment); })); };
 const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 const getLiveGeneWithRetry = async (id: string): Promise<Awaited<ReturnType<typeof liveGeneService.getGene>>> => {
   let result = await liveGeneService.getGene(id);
@@ -313,6 +381,304 @@ const getVariantWithGeneFallback = async (service: import('./services/types').Va
   return found ? { status: 'ok', data: found, dataMode: related.dataMode } : direct;
 };
 let latestRequestId = 0;
+let pendingSampleRegistryPreview: SampleRegistryImportPreview | undefined;
+let fileImportWorker: InstanceType<typeof SequenceAnalysisWorker> | undefined;
+let fileImportRequestId = 0;
+let activeFileImportRequestId = 0;
+let selectedLocalFile: File | undefined;
+let currentFileImportResult: FileImportResult | undefined;
+let currentFileProgress: { bytesRead: number; totalBytes: number; stage: 'parsing' | 'checksum' } | undefined;
+let currentFileImportError: string | undefined;
+let currentImportSampleId = '';
+let currentVcfFilters: { chromosome?: string; position?: string; id?: string; reference?: string; alternate?: string } = {};
+let currentVcfInfoFields: string[] | undefined;
+let pendingImportedSequence: string | undefined;
+
+const downloadTextFile = (filename: string, contents: string, contentType: string): void => {
+  const blob = new Blob([contents], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+const sampleRegistryErrorMessage = (error: unknown): string => {
+  if (!(error instanceof SampleRegistryError)) return t('sample.error.invalidImport');
+  const keys: Record<InstanceType<typeof SampleRegistryError>['code'], Parameters<typeof t>[0]> = {
+    unavailable: 'sample.error.storageUnavailable', corrupt: 'sample.error.corruptRegistry', 'too-large': 'sample.error.registryTooLarge',
+    'duplicate-id': 'sample.error.duplicateId', 'invalid-sample': 'sample.error.invalidSample', 'not-found': 'sample.error.notFound',
+  };
+  return t(keys[error.code]);
+};
+
+const renderSamplesRoute = (route: Route, error?: string): void => {
+  const target = document.querySelector<HTMLDivElement>('#page-content');
+  if (!target) return;
+  try {
+    const registry = getSampleRegistry();
+    const mode: 'list' | 'new' | 'detail' | 'edit' = route.id === 'new' ? 'new' : route.sub === 'edit' ? 'edit' : route.id ? 'detail' : 'list';
+    target.innerHTML = renderSampleRegistryPage(registry, {
+      mode, sampleId: mode === 'edit' ? route.id : mode === 'detail' ? route.id : undefined,
+      query: route.query.get('query') ?? '', type: route.query.get('type') ?? '', status: route.query.get('status') ?? '', organism: route.query.get('organism') ?? '',
+      suggestedId: suggestSampleId(), importPreview: pendingSampleRegistryPreview, error,
+    });
+    bindSampleRegistryPage(registry, route, mode);
+  } catch (registryError) {
+    target.innerHTML = renderSampleRegistryPage({ schemaVersion: 1, samples: [], issuedIds: [] }, { mode: 'list', suggestedId: '', error: sampleRegistryErrorMessage(registryError) });
+  }
+};
+
+const bindSampleRegistryPage = (registry: ReturnType<typeof getSampleRegistry>, route: Route, mode: 'list' | 'new' | 'detail' | 'edit'): void => {
+  bindCustomFieldsEditor();
+  document.querySelector<HTMLFormElement>('#sample-filter-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget as HTMLFormElement);
+    const params = new URLSearchParams();
+    for (const key of ['query', 'type', 'status', 'organism']) { const value = values.get(key)?.toString().trim(); if (value) params.set(key, value); }
+    window.location.hash = `#/samples${params.size ? `?${params.toString()}` : ''}`;
+  });
+  document.querySelector<HTMLButtonElement>('#sample-export-json')?.addEventListener('click', () => downloadJson('genelab-samples.json', JSON.parse(exportSampleRegistryJson())));
+  document.querySelector<HTMLButtonElement>('#sample-export-csv')?.addEventListener('click', () => downloadTextFile('genelab-samples.csv', exportSampleRegistryCsv(), 'text/csv;charset=utf-8'));
+  document.querySelector<HTMLInputElement>('#sample-registry-import')?.addEventListener('change', async (event) => {
+    const file = (event.currentTarget as HTMLInputElement).files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { renderSamplesRoute(route, t('sample.error.importTooLarge')); return; }
+    try {
+      const format = file.name.toLocaleLowerCase().endsWith('.csv') ? 'csv' : 'json';
+      pendingSampleRegistryPreview = previewSampleRegistryImport(await file.text(), format);
+      renderSamplesRoute(route);
+    } catch (error) { renderSamplesRoute(route, sampleRegistryErrorMessage(error)); }
+  });
+  document.querySelector<HTMLButtonElement>('#sample-merge-import')?.addEventListener('click', () => {
+    if (!pendingSampleRegistryPreview) return;
+    try {
+      mergeSampleRegistryImport(pendingSampleRegistryPreview);
+      pendingSampleRegistryPreview = undefined;
+      render();
+    } catch (error) { renderSamplesRoute(route, sampleRegistryErrorMessage(error)); }
+  });
+  const humanFlag = document.querySelector<HTMLInputElement>('#sample-human-derived');
+  humanFlag?.addEventListener('change', () => { const reminder = document.querySelector<HTMLElement>('#human-derived-reminder'); if (reminder) reminder.hidden = !humanFlag.checked; });
+  document.querySelector<HTMLFormElement>('#sample-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const values = new FormData(form);
+    const sampleInput = {
+      internalId: values.get('internalId')?.toString() ?? '',
+      organism: values.get('organism')?.toString().trim() ?? '',
+      taxonomyId: values.get('taxonomyId')?.toString().trim() || undefined,
+      sampleType: values.get('sampleType')?.toString() as SampleType,
+      collectionDate: values.get('collectionDate')?.toString() || undefined,
+      collectedBy: values.get('collectedBy')?.toString().trim() || undefined,
+      sourceLocation: values.get('sourceLocation')?.toString().trim() || undefined,
+      storage: { temperature: values.get('storageTemperature')?.toString().trim() || undefined, location: values.get('storageLocation')?.toString().trim() || undefined, box: values.get('storageBox')?.toString().trim() || undefined, position: values.get('storagePosition')?.toString().trim() || undefined },
+      protocol: values.get('protocol')?.toString().trim() || undefined,
+      protocolId: values.get('protocolId')?.toString().trim() || undefined,
+      quantity: values.get('quantity')?.toString() ? Number(values.get('quantity')) : undefined,
+      quantityUnit: values.get('quantityUnit')?.toString().trim() || undefined,
+      qualityNotes: values.get('qualityNotes')?.toString().trim() || undefined,
+      status: values.get('status')?.toString() as SampleStatus,
+      humanDerived: values.get('humanDerived') === 'true',
+      customFields: readCustomFields(values),
+    };
+    const note = values.get('historyNote')?.toString().trim() ?? '';
+    try {
+      const originalId = form.dataset.originalId;
+      const sample = mode === 'edit' && originalId ? updateSample(originalId, sampleInput, note) : createSample(sampleInput, note);
+      pendingSampleRegistryPreview = undefined;
+      window.location.hash = `#/samples/${encodeURIComponent(sample.internalId)}`;
+    } catch (error) {
+      const message = sampleRegistryErrorMessage(error);
+      const output = document.querySelector<HTMLElement>('#sample-form-error');
+      if (output) { output.hidden = false; output.textContent = message; }
+    }
+  });
+  if (mode === 'detail' && route.id && !registry.samples.some((sample) => sample.internalId === route.id)) {
+    const target = document.querySelector<HTMLDivElement>('#page-content');
+    if (target) target.innerHTML = renderSampleRegistryPage(registry, { mode: 'list', suggestedId: suggestSampleId(), error: t('sample.error.notFound') });
+  }
+};
+
+const renderImportsRoute = (): void => {
+  const target = document.querySelector<HTMLDivElement>('#page-content');
+  if (!target) return;
+  try {
+    const samples = getSampleRegistry().samples;
+    target.innerHTML = renderFileImportPageWithProgressIds(samples, {
+      result: currentFileImportResult, progress: currentFileProgress, error: currentFileImportError,
+      selectedFile: selectedLocalFile ? { name: selectedLocalFile.name, size: selectedLocalFile.size, format: getFileFormatLabel(selectedLocalFile.name) } : undefined,
+      selectedSampleId: currentImportSampleId, vcfFilters: currentVcfFilters,
+    });
+    bindFileImportPage(samples);
+  } catch (error) {
+    currentFileImportError = sampleRegistryErrorMessage(error);
+    target.innerHTML = renderFileImportPageWithProgressIds([], { error: currentFileImportError });
+    bindFileImportPage([]);
+  }
+};
+
+const getFileFormatLabel = (name: string): string => {
+  const normalized = name.toLocaleLowerCase().replace(/\.gz$/, '');
+  return /\.(fastq|fq)$/.test(normalized) ? 'FASTQ' : normalized.endsWith('.vcf') ? 'VCF' : /\.(csv|tsv)$/.test(normalized) ? 'CSV/TSV' : t('fileImport.unsupported');
+};
+
+const workerFileError = (error: string, lineNumber?: number): string => {
+  const key = `fileImport.error.${error}` as Parameters<typeof t>[0];
+  const message = t(key);
+  return lineNumber ? `${message} · ${t('fileImport.line')} ${lineNumber}` : message;
+};
+
+const ensureFileImportWorker = (): InstanceType<typeof SequenceAnalysisWorker> => {
+  if (fileImportWorker) return fileImportWorker;
+  const worker = new SequenceAnalysisWorker();
+  fileImportWorker = worker;
+  worker.addEventListener('message', (event: MessageEvent<{ id: number; kind?: string; progress?: { bytesRead: number; totalBytes: number; stage: 'parsing' | 'checksum' }; result?: unknown; rows?: import('./models/fileImport').VcfVariantRecord[]; pageIndex?: number; pageCount?: number; totalCount?: number; error?: string; lineNumber?: number }>) => {
+    const message = event.data;
+    if (message.id !== activeFileImportRequestId) return;
+    if (message.kind === 'progress' && message.progress) {
+      currentFileProgress = message.progress;
+      const progress = document.querySelector<HTMLProgressElement>('#file-import-progress');
+      const label = document.querySelector<HTMLElement>('#file-import-progress-label');
+      const stage = document.querySelector<HTMLElement>('.import-progress p');
+      if (progress) {
+        if (message.progress.totalBytes) { progress.max = message.progress.totalBytes; progress.value = Math.min(message.progress.bytesRead, message.progress.totalBytes); }
+        else { progress.removeAttribute('max'); progress.removeAttribute('value'); }
+      }
+      if (label) label.textContent = message.progress.totalBytes ? `${message.progress.bytesRead.toLocaleString()} / ${message.progress.totalBytes.toLocaleString()} bytes` : `${t('fileImport.bytesRead')}: ${message.progress.bytesRead.toLocaleString()} bytes`;
+      if (stage) stage.textContent = t(`fileImport.stage.${message.progress.stage}`);
+      return;
+    }
+    if (message.kind === 'vcf-page-result' && currentFileImportResult?.format === 'vcf' && message.rows) {
+      currentFileImportResult = { ...currentFileImportResult, variants: message.rows, pageIndex: message.pageIndex ?? 0, pageCount: message.pageCount ?? 1, filteredVariantCount: message.totalCount ?? 0 };
+      currentFileProgress = undefined;
+      renderImportsRoute();
+      return;
+    }
+    if (message.kind === 'import-result' && message.result) {
+      currentFileImportResult = message.result as FileImportResult;
+      currentFileProgress = undefined;
+      currentFileImportError = undefined;
+      currentVcfFilters = {};
+      currentVcfInfoFields = currentFileImportResult.format === 'vcf' ? currentFileImportResult.infoDefinitions.slice(0, 4).map((definition) => definition.id) : undefined;
+      try { linkAnalysisToSample(currentFileImportResult.sampleId, currentFileImportResult.metadata, t('fileImport.analysisLinkedNote')); }
+      catch (error) { currentFileImportError = sampleRegistryErrorMessage(error); }
+      renderImportsRoute();
+      return;
+    }
+    currentFileProgress = undefined;
+    if (message.kind === 'import-cancelled') currentFileImportError = t('fileImport.error.import-cancelled');
+    else currentFileImportError = workerFileError(message.error ?? 'unknown', message.lineNumber);
+    renderImportsRoute();
+  });
+  worker.addEventListener('error', () => {
+    fileImportWorker?.terminate();
+    fileImportWorker = undefined;
+    currentFileProgress = undefined;
+    currentFileImportError = t('fileImport.error.worker-failed');
+    renderImportsRoute();
+  }, { once: true });
+  return worker;
+};
+
+const requestVcfPage = (pageIndex: number): void => {
+  if (currentFileImportResult?.format !== 'vcf') return;
+  const worker = ensureFileImportWorker();
+  const id = ++fileImportRequestId;
+  activeFileImportRequestId = id;
+  currentFileProgress = { bytesRead: 0, totalBytes: 0, stage: 'parsing' };
+  renderImportsRoute();
+  worker.postMessage({ kind: 'vcf-page', id, importId: currentFileImportResult.id, pageIndex, pageSize: currentFileImportResult.pageSize ?? 50, filters: currentVcfFilters });
+};
+
+const bindFileImportPage = (_samples: Sample[]): void => {
+  const fileInput = document.querySelector<HTMLInputElement>('#import-file');
+  const fileStatus = document.querySelector<HTMLElement>('#file-selection-status');
+  const dropzone = document.querySelector<HTMLElement>('#file-dropzone');
+  const selectFile = (file?: File): void => {
+    if (!file) return;
+    selectedLocalFile = file;
+    currentFileImportResult = undefined;
+    currentFileImportError = undefined;
+    document.querySelector<HTMLElement>('.file-import-results')?.remove();
+    if (fileStatus) fileStatus.textContent = `${file.name} · ${file.size.toLocaleString()} bytes · ${getFileFormatLabel(file.name)}`;
+  };
+  document.querySelector<HTMLSelectElement>('#file-sample')?.addEventListener('change', (event) => {
+    currentImportSampleId = (event.currentTarget as HTMLSelectElement).value;
+    renderImportsRoute();
+  });
+  fileInput?.addEventListener('change', () => selectFile(fileInput.files?.[0]));
+  dropzone?.addEventListener('dragover', (event) => { event.preventDefault(); dropzone.classList.add('is-dragging'); });
+  dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('is-dragging'));
+  dropzone?.addEventListener('drop', (event) => { event.preventDefault(); dropzone.classList.remove('is-dragging'); selectFile((event as DragEvent).dataTransfer?.files?.[0]); });
+  dropzone?.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileInput?.click(); } });
+  document.querySelector<HTMLFormElement>('#file-import-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const file = selectedLocalFile;
+    const values = new FormData(event.currentTarget as HTMLFormElement);
+    const sampleId = values.get('sampleId')?.toString() ?? '';
+    if (!file || !sampleId) { currentFileImportError = t(file ? 'fileImport.error.sample-required' : 'fileImport.error.no-file'); renderImportsRoute(); return; }
+    const format = getFileFormatLabel(file.name);
+    const csv = format === 'CSV/TSV';
+    const maxMb = Number(values.get(csv ? 'maxCsvMb' : 'maxStreamMb')) || (csv ? 10 : 200);
+    const maxBytes = maxMb * 1024 * 1024;
+    if (file.size > maxBytes) { currentFileImportError = t('fileImport.error.file-too-large'); renderImportsRoute(); return; }
+    currentImportSampleId = sampleId;
+    currentFileImportResult = undefined;
+    currentFileImportError = undefined;
+    currentFileProgress = { bytesRead: 0, totalBytes: file.size, stage: 'parsing' };
+    const worker = ensureFileImportWorker();
+    const id = ++fileImportRequestId;
+    activeFileImportRequestId = id;
+    renderImportsRoute();
+    worker.postMessage({ kind: 'import-file', id, file, sampleId, maxStreamBytes: Number(values.get('maxStreamMb')) * 1024 * 1024 || 200 * 1024 * 1024, maxCsvBytes: Number(values.get('maxCsvMb')) * 1024 * 1024 || 10 * 1024 * 1024 });
+  });
+  document.querySelector<HTMLButtonElement>('#cancel-file-import')?.addEventListener('click', () => { if (fileImportWorker && activeFileImportRequestId) fileImportWorker.postMessage({ kind: 'cancel-import', id: activeFileImportRequestId }); });
+  document.querySelector<HTMLFormElement>('#qpcr-mapping-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (currentFileImportResult?.format !== 'table') return;
+    const values = new FormData(event.currentTarget as HTMLFormElement);
+    const optional = (name: string): string | undefined => values.get(name)?.toString() || undefined;
+    const mapping: QpcrColumnMapping = { sample: optional('sample') ?? '', target: optional('target') ?? '', ct: optional('ct') ?? '', well: optional('well'), replicate: optional('replicate'), plate: optional('plate') };
+    const referenceGene = optional('referenceGene');
+    const controlSample = optional('controlSample');
+    const worker = ensureFileImportWorker();
+    const id = ++fileImportRequestId;
+    activeFileImportRequestId = id;
+    currentFileProgress = { bytesRead: 0, totalBytes: 0, stage: 'parsing' };
+    renderImportsRoute();
+    worker.postMessage({ kind: 'analyze-qpcr', id, table: currentFileImportResult, mapping, threshold: Number(values.get('threshold')) || 0.5, referenceGene, controlSample });
+  });
+  document.querySelector<HTMLFormElement>('#vcf-filters')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget as HTMLFormElement);
+    currentVcfFilters = Object.fromEntries(['chromosome', 'position', 'id', 'reference', 'alternate'].flatMap((key) => { const value = values.get(key)?.toString().trim(); return value ? [[key, value]] : []; }));
+    requestVcfPage(0);
+  });
+  document.querySelector<HTMLButtonElement>('#vcf-prev')?.addEventListener('click', () => requestVcfPage(Math.max(0, (currentFileImportResult?.format === 'vcf' ? currentFileImportResult.pageIndex ?? 0 : 0) - 1)));
+  document.querySelector<HTMLButtonElement>('#vcf-next')?.addEventListener('click', () => requestVcfPage((currentFileImportResult?.format === 'vcf' ? currentFileImportResult.pageIndex ?? 0 : 0) + 1));
+  document.querySelectorAll<HTMLInputElement>('[data-vcf-info-field]').forEach((checkbox) => checkbox.addEventListener('change', () => {
+    if (currentFileImportResult?.format !== 'vcf') return;
+    currentVcfInfoFields = [...document.querySelectorAll<HTMLInputElement>('[data-vcf-info-field]:checked')].map((input) => input.value).slice(0, 4);
+    currentFileImportResult = { ...currentFileImportResult, selectedInfoFields: currentVcfInfoFields };
+    const table = document.querySelector<HTMLTableElement>('.vcf-table-section table');
+    const head = table?.querySelector('thead');
+    const body = table?.querySelector('tbody');
+    if (head && body) { head.innerHTML = renderVcfTableHead(currentFileImportResult, currentVcfInfoFields); body.innerHTML = renderVcfPageRows(currentFileImportResult.variants, currentVcfInfoFields); }
+  }));
+  document.querySelector<HTMLButtonElement>('#send-first-read')?.addEventListener('click', () => {
+    if (currentFileImportResult?.format !== 'fastq' || !currentFileImportResult.firstRead) return;
+    pendingImportedSequence = `${currentFileImportResult.firstRead.header}\n${currentFileImportResult.firstRead.sequence}`;
+    window.location.hash = `#/lab?sample=${encodeURIComponent(currentFileImportResult.sampleId)}`;
+  });
+  document.querySelector<HTMLButtonElement>('#save-import-to-notebook')?.addEventListener('click', () => {
+    if (!currentFileImportResult) return;
+    saveExperiment({ title: `${currentFileImportResult.fileName} · ${t('fileImport.results')}`, notes: '', tags: [], sampleIds: [currentFileImportResult.sampleId], references: [{ kind: 'analysis', id: currentFileImportResult.metadata.fileChecksum, label: currentFileImportResult.fileName, data: currentFileImportResult }], dataPoints: [] });
+    currentFileImportError = t('fileImport.notebookSaved');
+    renderImportsRoute();
+  });
+};
 
 const renderVariantGene = async (target: HTMLDivElement, requestId: number, route: Route, gene: import('./models/scientific').Gene, demoMode: boolean, directVariant?: import('./models/scientific').Variant): Promise<void> => {
   const variants = directVariant ? { data: [directVariant] } : await (demoMode ? demoVariantService : liveVariantService).getVariantsForGene(gene.id);
@@ -350,6 +716,8 @@ const loadContent = async (route: Route, requestId: number): Promise<void> => {
   if (!target) return;
   const demoMode = route.query.get('demo') === '1';
   const geneService = demoMode ? demoGeneService : liveGeneService;
+  if (route.kind === 'samples') { renderSamplesRoute(route); return; }
+  if (route.kind === 'imports') { renderImportsRoute(); return; }
   if (route.kind === 'genes') {
     const query = route.query.get('q') ?? '';
     const result = await geneService.search(query);
@@ -403,9 +771,28 @@ const loadContent = async (route: Route, requestId: number): Promise<void> => {
   if (route.kind === 'variant-explorer') { const query = route.query.get('q')?.trim() ?? ''; const result = query ? await searchVariantKnowledge(query, { genome: route.query.get('genome') || undefined, variantType: route.query.get('variantType') || undefined }) : undefined; if (requestId !== latestRequestId) return; target.innerHTML = renderVariantKnowledgePage(result); bindVariantKnowledgeSearch((nextQuery, filters) => { const params = new URLSearchParams({ q: nextQuery }); Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); }); window.location.hash = `#/variant-explorer?${params.toString()}`; }); return; }
   if (route.kind === 'variant-assessment' && route.id) { const result = await getVariantKnowledge(route.id); if (requestId !== latestRequestId) return; const record = result.records[0]; if (!record) { target.innerHTML = renderVariantKnowledgePage(result); bindVariantKnowledgeSearch((query) => { window.location.hash = `#/variant-explorer?q=${encodeURIComponent(query)}`; }); return; } target.innerHTML = renderVariantAssessmentPage(record); bindVariantAssessment(record, () => render()); return; }
   if (route.kind === 'variants') { const geneId = route.query.get('gene'); const query = route.query.get('q')?.trim() ?? ''; if (geneId) { const result = await geneService.getGene(geneId); if (requestId !== latestRequestId) return; if (result.status !== 'ok' || !result.data) { target.innerHTML = renderError(result.errorCode, geneId); return; } await renderVariantGene(target, requestId, route, result.data, demoMode); return; } if (query) { const variantQuery = /^(VCV|SCV|rs|DEMO-VAR)/i.test(query); if (variantQuery) { const variant = await (demoMode ? demoVariantService : liveVariantService).getVariant(query); if (variant.status === 'ok' && variant.data) { const gene = await (demoMode ? demoGeneService : liveGeneService).getGene(variant.data.geneId); if (gene.status === 'ok' && gene.data) { await renderVariantGene(target, requestId, route, gene.data, demoMode, variant.data); return; } } } const search = await geneService.search(query); const candidate = search.data?.find((item) => item.symbol.toLocaleLowerCase() === query.toLocaleLowerCase() || item.id.toLocaleLowerCase() === query.toLocaleLowerCase()) ?? (search.data?.length === 1 ? search.data[0] : undefined); if (candidate) { const gene = await geneService.getGene(candidate.id); if (gene.status === 'ok' && gene.data) { await renderVariantGene(target, requestId, route, gene.data, demoMode); return; } } if (requestId !== latestRequestId) return; target.innerHTML = renderVariantExplorer(undefined, [], '', '', demoMode ? 'demo' : 'live', query, true); bindVariantSearch(); return; } target.innerHTML = renderVariantExplorer(undefined, [], '', '', demoMode ? 'demo' : 'live'); bindVariantSearch(); return; }
-  if (route.kind === 'literature') { const query = route.query.get('q') ?? ''; const result = await liveLiteratureService.searchPublications(query); if (requestId !== latestRequestId) return; target.innerHTML = renderLiteraturePage(result.data ?? [], query); bindLiteratureSearch(result.data ?? []); return; }
+  if (route.kind === 'literature') {
+    const query = route.query.get('q') ?? '';
+    const sourceValue = route.query.get('source');
+    const articleTypeValue = route.query.get('articleType');
+    const filters: import('./utils/literature').LiteratureFilters = {
+      source: sourceValue === 'europepmc' || sourceValue === 'both' ? sourceValue : 'pubmed',
+      yearFrom: route.query.get('yearFrom') && Number.isInteger(Number(route.query.get('yearFrom'))) ? Number(route.query.get('yearFrom')) : undefined,
+      yearTo: route.query.get('yearTo') && Number.isInteger(Number(route.query.get('yearTo'))) ? Number(route.query.get('yearTo')) : undefined,
+      openAccessOnly: route.query.get('openAccessOnly') === '1',
+      articleType: articleTypeValue === 'review' || articleTypeValue === 'original' ? articleTypeValue : 'any',
+      preprints: route.query.get('preprints') === 'exclude' ? 'exclude' : 'include',
+    };
+    const result = await liveLiteratureService.searchPublications(query, filters);
+    if (requestId !== latestRequestId) return;
+    const state = result.status === 'error' ? 'error' : result.message ? 'partial' : undefined;
+    target.innerHTML = renderLiteraturePage(result.data ?? [], query, filters, state);
+    bindLiteratureSearch(result.data ?? []);
+    return;
+  }
   if (route.kind === 'lab') {
-    let sequence = pendingProteinSequence ?? '';
+    let sequence = pendingImportedSequence ?? pendingProteinSequence ?? '';
+    pendingImportedSequence = undefined;
     pendingProteinSequence = undefined;
     const accession = route.query.get('protein');
     const geneId = route.query.get('gene');
@@ -427,7 +814,7 @@ const loadContent = async (route: Route, requestId: number): Promise<void> => {
   }
   if (route.kind === 'saved') { target.innerHTML = renderWorkspaceSelectionWithNotes(getSavedItems(), getHistory()); bindCompareSelection(); bindWorkspaceNotes(); return; }
   if (route.kind === 'compare') { const savedGeneIds = getSavedItems().filter((item) => item.kind === 'gene').map((item) => item.id); const ids = route.query.get('ids')?.split(',').filter(Boolean) ?? savedGeneIds; const genes: import('./models/scientific').Gene[] = []; for (const id of ids) { if (requestId !== latestRequestId) return; const result = await getLiveGeneWithRetry(id); if (result.status === 'ok' && result.data) genes.push(result.data); } if (requestId !== latestRequestId) return; target.innerHTML = renderGeneComparisonPage(genes); return; }
-  if (route.kind === 'notebook') { if (requestId !== latestRequestId) return; target.innerHTML = renderNotebookPage(getExperiments()); bindNotebook(); return; }
+  if (route.kind === 'notebook') { if (requestId !== latestRequestId) return; const samples = getSampleRegistry().samples; target.innerHTML = renderNotebookPageWithSamples(getExperiments(), samples); bindNotebook(); return; }
   if (route.kind === 'assistant') { const query = route.query.get('q') ?? ''; if (!query) { target.innerHTML = renderAssistantPage(); bindAssistant(); return; } const result = await liveGeneService.getGene(query); if (requestId !== latestRequestId) return; target.innerHTML = renderAssistantPage(result.data, query); bindAssistant(); return; }
   if (route.kind === 'about') { target.innerHTML = renderAboutPage(); return; }
   if (route.kind === 'sources') { target.innerHTML = renderSourcesPage(); return; }
@@ -439,11 +826,12 @@ const loadContent = async (route: Route, requestId: number): Promise<void> => {
     if (requestId !== latestRequestId) return;
     target.innerHTML = renderGeneDetailsWithNomenclature(result.data, result.dataMode ?? 'live', nomenclatureResult?.data);
     bindGeneProteinLink(result.data);
+    bindGeneLiteratureLink(result.data);
     addHistoryEntry({ kind: 'gene', id: result.data.id, label: result.data.symbol, href: window.location.hash });
     bindWorkspaceAction('gene', result.data.id, result.data.symbol, result.data.name, result.data);
     return;
   }
-  if (route.kind === 'variant' && route.id) { const variantServiceForRoute = demoMode ? demoVariantService : liveVariantService; const result = await getVariantWithGeneFallback(variantServiceForRoute, route.id, route.query.get('gene') ?? undefined); if (requestId !== latestRequestId) return; if (result.status !== 'ok' || !result.data) { target.innerHTML = renderError(result.errorCode, route.id); return; } const gene = demoMode ? await demoGeneService.getGene(result.data.geneId) : await liveGeneService.getGene(result.data.geneId); if (requestId !== latestRequestId) return; target.innerHTML = renderVariantDetails(result.data, gene.data, demoMode ? 'demo' : 'live'); addHistoryEntry({ kind: 'variant', id: result.data.id, label: result.data.id, href: window.location.hash }); bindWorkspaceAction('variant', result.data.id, result.data.id, result.data.consequence ?? result.data.variantType, result.data); }
+  if (route.kind === 'variant' && route.id) { const variantServiceForRoute = demoMode ? demoVariantService : liveVariantService; const result = await getVariantWithGeneFallback(variantServiceForRoute, route.id, route.query.get('gene') ?? undefined); if (requestId !== latestRequestId) return; if (result.status !== 'ok' || !result.data) { target.innerHTML = renderError(result.errorCode, route.id); return; } const gene = demoMode ? await demoGeneService.getGene(result.data.geneId) : await liveGeneService.getGene(result.data.geneId); if (requestId !== latestRequestId) return; target.innerHTML = renderVariantDetailsWithPopulation(result.data, gene.data, demoMode ? 'demo' : 'live'); bindVariantPopulationLookup(); addHistoryEntry({ kind: 'variant', id: result.data.id, label: result.data.id, href: window.location.hash }); bindWorkspaceAction('variant', result.data.id, result.data.id, result.data.consequence ?? result.data.variantType, result.data); }
 };
 
 const render = (): void => { const route = parseRoute(); const requestId = ++latestRequestId; renderShell(route); if (route.kind !== 'home' && route.kind !== 'planned') void loadContent(route, requestId); };

@@ -7,8 +7,9 @@ const cache = new Map<string, { expiresAt: number; value: ServiceResult<Variant[
 
 interface ClinvarSearchResponse { esearchresult?: { idlist?: string[] }; }
 interface ClinvarLocation { assembly_name?: string; chr?: string; start?: string; stop?: string; assembly_acc_ver?: string; }
-interface ClinvarVariation { variation_name?: string; cdna_change?: string; variation_loc?: ClinvarLocation[]; variant_type?: string; canonical_spdi?: string; }
-interface ClinvarRecord { uid?: string; accession?: string; variation_set?: ClinvarVariation[]; germline_classification?: { description?: string; review_status?: string; trait_set?: Array<{ trait_name?: string }>; }; genes?: Array<{ geneid?: string; symbol?: string }>; molecular_consequence_list?: string[]; protein_change?: string; }
+interface ClinvarXref { db?: string; id?: string; db_name?: string; db_source?: string; db_id?: string; }
+interface ClinvarVariation { variation_name?: string; cdna_change?: string; variation_loc?: ClinvarLocation[]; variant_type?: string; canonical_spdi?: string; variation_xrefs?: ClinvarXref[]; }
+interface ClinvarRecord { uid?: string; accession?: string; variation_set?: ClinvarVariation[]; variation_xrefs?: ClinvarXref[]; germline_classification?: { description?: string; review_status?: string; trait_set?: Array<{ trait_name?: string }>; }; genes?: Array<{ geneid?: string; symbol?: string }>; molecular_consequence_list?: string[]; protein_change?: string; }
 interface ClinvarSummaryResponse { result?: { uids?: string[]; [id: string]: ClinvarRecord | string[] | undefined }; }
 
 const cleanTraits = (traits: Array<{ trait_name?: string }> | undefined): string[] => [...new Set((traits ?? [])
@@ -45,6 +46,15 @@ const normalize = (record: ClinvarRecord, geneId: string, retrievedAt: string): 
   const end = location?.stop ? Number(location.stop) : start;
   const genomicLocation: GenomicLocation | undefined = location?.chr ? { assembly: location.assembly_name ?? location.assembly_acc_ver ?? 'ClinVar assembly', chromosome: location.chr, start, end } : undefined;
   const resolvedGeneId = geneId || record.genes?.[0]?.geneid || '';
+  const dbSnpIds = [...(record.variation_set ?? []).flatMap((item) => item.variation_xrefs ?? []), ...(record.variation_xrefs ?? [])]
+    .filter((xref) => /dbsnp/i.test(`${xref.db_source ?? ''} ${xref.db ?? ''} ${xref.db_name ?? ''}`))
+    .map((xref) => xref.db_id ?? xref.id)
+    .filter((item): item is string => Boolean(item && (/^rs\d+$/i.test(item) || /^\d+$/.test(item))))
+    .map((item) => (item.toLocaleLowerCase().startsWith('rs') ? item.toLocaleLowerCase() : `rs${item}`));
+  const namedRsIds = (record.variation_set ?? []).map((item) => item.variation_name)
+    .filter((item): item is string => Boolean(item && /^rs\d+$/i.test(item)))
+    .map((item) => item.toLocaleLowerCase());
+  const rsIds = [...new Set([...namedRsIds, ...dbSnpIds])];
   return {
     id: record.accession ?? `VCV${record.uid}`,
     geneId: resolvedGeneId,
@@ -57,6 +67,7 @@ const normalize = (record: ClinvarRecord, geneId: string, retrievedAt: string): 
     clinicalSignificance: record.germline_classification?.description,
     reviewStatus: record.germline_classification?.review_status,
     condition: hasDiseaseAssociatedClassification(record.germline_classification?.description) ? cleanTraits(record.germline_classification?.trait_set).join('; ') || undefined : undefined,
+    rsIds: rsIds.length ? rsIds : undefined,
     evidence: [source],
   };
 };
@@ -93,11 +104,17 @@ export const createClinvarVariantAdapter = (): VariantService => ({
     try {
       return await withTimeout(async (signal) => {
         const accession = id.toLocaleUpperCase();
+        const vcvAccession = /^VCV\d+(?:\.\d+)?$/.test(accession) ? accession.split('.')[0] : undefined;
         const term = /^RS\d+$/i.test(id) ? `${id}[All Fields]` : `${accession}[Accession]`;
         const search = await fetchJson<ClinvarSearchResponse>(`${baseUrl}/esearch.fcgi?db=clinvar&term=${encodeURIComponent(term)}&retmode=json&retmax=1`, signal);
-        const ids = search.esearchresult?.idlist ?? (accession.replace(/^VCV/, '').replace(/^0+/, '') ? [accession.replace(/^VCV/, '').replace(/^0+/, '')] : []);
+        const searchedIds = search.esearchresult?.idlist;
+        if (!searchedIds) return failure<Variant>('malformed', 'ClinVar returned an unexpected response.');
+        const numericVcvId = vcvAccession?.slice(3).replace(/^0+/, '') || (vcvAccession ? '0' : undefined);
+        const ids = searchedIds.length ? searchedIds : numericVcvId ? [numericVcvId] : [];
         const result: ServiceResult<Variant[]> = ids.length ? await summarize(ids, '', signal) : { status: 'ok', data: [], dataMode: 'live' };
-        return result.data?.[0] ? { status: 'ok', data: result.data[0], dataMode: 'live' as const } : failure<Variant>('not-found', 'No ClinVar variant record was found.');
+        if (result.status !== 'ok') return { status: result.status, errorCode: result.errorCode, message: result.message, dataMode: result.dataMode };
+        const variant = vcvAccession ? result.data?.find((item) => item.id.toLocaleUpperCase() === vcvAccession) : result.data?.[0];
+        return variant ? { status: 'ok', data: variant, dataMode: 'live' as const } : failure<Variant>('not-found', 'No ClinVar variant record was found for this exact identifier.');
       });
     } catch (error) {
       return failure(error instanceof Error && error.message === 'RATE_LIMITED' ? 'rate-limited' : 'network', 'ClinVar could not be reached.');

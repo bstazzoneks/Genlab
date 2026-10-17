@@ -1,0 +1,12 @@
+@read-1 sample=S1
+ACGTN
++
+!!!!!
+@read-2 sample=S1
+GGCC
++
+IIII
+@read-3 sample=S2
+AT
++
+II

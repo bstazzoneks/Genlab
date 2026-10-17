@@ -1,0 +1,8 @@
+##fileformat=VCFv4.3
+##assembly=GRCh38
+##contig=<ID=1,length=248956422,assembly=GRCh38>
+##INFO=<ID=AF,Number=A,Type=Float,Description="Per ALT frequency, local fixture">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SampleA	SampleB
+1	10	rs100	A	G,T	50	PASS	AF=0.4,0.1	GT	0/1	1/2
+1	20	.	A	<DEL>	.	q10	DP=5	GT	1/1	0/0

@@ -12,6 +12,7 @@ export interface ScientificSource {
   category: EvidenceCategory;
   identifier?: string;
   url?: string;
+  dataUseUrl?: string;
   retrievedAt?: string;
   limitations?: string[];
 }
@@ -70,7 +71,32 @@ export interface Variant {
   submitters?: string[];
   condition?: string;
   frequency?: string;
+  rsIds?: string[];
+  requestedRsId?: string;
+  mergedRsIds?: string[];
+  genomicPlacements?: Array<{
+    assemblyName?: string;
+    assemblyAccession?: string;
+    sequenceId?: string;
+    chromosome?: string;
+    start?: number;
+    end?: number;
+    referenceAllele?: string;
+    alternateAlleles?: string[];
+    strand?: '+' | '-';
+  }>;
   evidence: ScientificSource[];
+}
+
+export interface PopulationFrequency {
+  populationName: string;
+  sourceStudy: string;
+  allele: string;
+  frequency: number;
+  alleleCount?: number;
+  sampleSize?: number;
+  assembly?: string;
+  source: ScientificSource;
 }
 
 export interface Protein {
@@ -121,6 +147,12 @@ export interface Publication {
   identifiers: Record<string, string>;
   url?: string;
   source: ScientificSource;
+  sources?: ScientificSource[];
+  isOpenAccess?: boolean;
+  citationCount?: number;
+  fullTextUrl?: string;
+  isPreprint?: boolean;
+  publicationTypes?: string[];
 }
 
 export interface Sequence {
